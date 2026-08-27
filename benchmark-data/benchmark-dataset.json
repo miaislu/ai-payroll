@@ -1,0 +1,243 @@
+{
+  "meta": {
+    "title": "半导体工程师岗位薪酬对标数据集（真实数据 v0.2 校准版）",
+    "scope": "中国大陆 · 现金年薪口径（含年终，不含期权/补贴）",
+    "generated": "2025-06-17",
+    "default_band": "3-5年经验 · 上海 · Fabless",
+    "disclaimer": "数据来源为公开行业报告/上市公司年报/招聘平台公开岗位/媒体，仅供内部对标库校准参考，不构成薪酬建议；各源统计口径不一（招聘开价通常高于实发 10-20%），证据强度见各条。",
+    "calibration_note": "v0.2 依据子代理调研与公开报告完成校准：模拟IC P50 由 58万 下调至 50万（偏高 10-20%）；工艺/封装工程师原型明显高估（原型未区分全经验平均与 3-5年 口径）。招聘开价类来源按 10-20% 下修处理。"
+  },
+  "directions": [
+    {
+      "direction": "模拟IC设计工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 50,
+      "p25_wan": 42,
+      "p75_wan": 62,
+      "annual_months": 14,
+      "rarity_factor": 1.15,
+      "evidence": "中",
+      "sources": [
+        {"title": "猎聘：模拟IC设计应届 25-35k/月（33-46万/年）", "url": "https://m.liepin.com/city-sh/zpmoniicsheji112/", "type": "job_posting", "year": 2025},
+        {"title": "猎聘：模拟IC资深 30-50k·15薪（45-75万/年）", "url": "https://m.liepin.com/city-sh/zpmnjcdlsjsxsw66t13/", "type": "job_posting", "year": 2025},
+        {"title": "猎聘：SerDes/PLL 高速接口 30-60k/月", "url": "https://m.liepin.com/city-sh/zpmnicsjyjzyl38p/", "type": "job_posting", "year": 2025},
+        {"title": "猎聘人才洞察：模拟IC/数字前端年薪 40-50 万", "url": "https://www.sgpjbg.com/labelsyh/xinpianshejirencaihuaxiang.html", "type": "industry_report", "year": 2024},
+        {"title": "集成电路行业人才洞察报告2024：模拟岗位薪酬同比下降", "url": "https://laoyaoba.com/html/share/news/930796", "type": "industry_report_news", "year": 2024},
+        {"title": "半导体行业薪酬：年薪40万是什么水准", "url": "https://m.eefocus.com/article/1838152.html", "type": "media", "year": 2024}
+      ],
+      "notes": "招聘开价口径（下修 10-20%）：应届 33-46万、资深 45-75万、猎聘洞察 40-50万 → P50 取 50万。原型 58万 偏高 10-20%；电源/高速接口方向+15薪+期权仍可达 60-70万（P75 区间）。"
+    },
+    {
+      "direction": "数字IC前端工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 52,
+      "p25_wan": 42,
+      "p75_wan": 68,
+      "annual_months": 14,
+      "rarity_factor": 1.0,
+      "evidence": "中",
+      "sources": [
+        {"title": "脉脉高聘2024：数字前端平均月薪 67728 元（≈81万/年，全经验段招聘口径）", "url": "https://news.pconline.com.cn/1855/18552770.html", "type": "industry_report", "year": 2024},
+        {"title": "猎聘人才洞察：模拟IC/数字前端年薪 40-50 万", "url": "https://www.sgpjbg.com/labelsyh/xinpianshejirencaihuaxiang.html", "type": "industry_report", "year": 2024},
+        {"title": "51icjob：数字IC设计高级岗 60-150 万", "url": "https://www.51icjob.com/jobinfo/1282945", "type": "job_posting", "year": 2025},
+        {"title": "集成电路行业人才洞察报告2024：数字前端薪酬回落", "url": "https://laoyaoba.com/html/share/news/930796", "type": "industry_report_news", "year": 2024}
+      ],
+      "notes": "脉脉均值为全经验段招聘开价（偏高），猎聘洞察 40-50万，2024 回落 → P50 取 52万。"
+    },
+    {
+      "direction": "数字验证工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 50,
+      "p25_wan": 40,
+      "p75_wan": 65,
+      "annual_months": 14,
+      "rarity_factor": 1.0,
+      "evidence": "中",
+      "sources": [
+        {"title": "拉勾：数字验证工程师 50-69k/月（65-90万/年，高端样本）", "url": "https://www.lagou.com/wn/jobs/12564907.html", "type": "job_posting", "year": 2025},
+        {"title": "半导体人才薪酬榜单：设计验证工程师年薪突破 50 万", "url": "https://www.toutiao.com/article/7532910063443362339/", "type": "media", "year": 2025}
+      ],
+      "notes": "榜单破 50 万 + 拉勾高端样本（下修后）→ P50 取 50万；拉勾样本偏高端，P75 谨慎。"
+    },
+    {
+      "direction": "数字后端工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 50,
+      "p25_wan": 40,
+      "p75_wan": 65,
+      "annual_months": 14,
+      "rarity_factor": 1.05,
+      "evidence": "弱",
+      "sources": [
+        {"title": "集成电路行业人才洞察报告2024：数字前端与后端薪酬回落", "url": "https://laoyaoba.com/html/share/news/930796", "type": "industry_report_news", "year": 2024},
+        {"title": "西安紫光国芯数字后端招聘（无聚合薪资数字）", "url": "http://ts.jrzp.com/job2951520.shtml", "type": "job_posting", "year": 2024}
+      ],
+      "notes": "无公开聚合数字，按与数字前端同档估计并因 2024 回落下调；原型 55万 偏高。"
+    },
+    {
+      "direction": "版图设计工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 38,
+      "p25_wan": 30,
+      "p75_wan": 48,
+      "annual_months": 13,
+      "rarity_factor": 1.0,
+      "evidence": "弱",
+      "sources": [
+        {"title": "jobui：上海版图设计工程师薪资聚合页（样本自报，无分位）", "url": "https://m.jobui.com/salary/shanghai-bantushejigongchengshi/area090909/", "type": "job_site", "year": 2024},
+        {"title": "上海贝岭模拟版图招聘（无薪资数字）", "url": "https://zz.jrzp.com/job3425462.shtml", "type": "job_posting", "year": 2024}
+      ],
+      "notes": "公开分位数据缺失，按与数字前端 0.7 倍关系估计；建议第三方报告锚点。"
+    },
+    {
+      "direction": "工艺工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 36,
+      "p25_wan": 28,
+      "p75_wan": 46,
+      "annual_months": 14,
+      "rarity_factor": 1.1,
+      "evidence": "中",
+      "sources": [
+        {"title": "集成电路行业人才洞察报告2024：工艺+设备平均年薪约 20 万，同比 +7~8%（唯一逆势上涨）", "url": "http://www.c114.net.cn/chip/118462.html", "type": "industry_report_news", "year": 2024},
+        {"title": "中芯国际 2024 年报：研发人员平均薪酬 53 万/年（研发口径，含器件/工艺研发，属高端锚）", "url": "https://wap.stockstar.com/detail/IG2025032800047606", "type": "annual_report", "year": 2024},
+        {"title": "中芯国际（上海）工程师工资待遇参考", "url": "https://wap.hunt007.com/qyzwxc/6837218.htm", "type": "job_site", "year": 2024}
+      ],
+      "notes": "全行业平均 20 万为全国全经验口径（含设备/初级），上海 3-5年 晶圆厂工程师取 36万；原型 45万 高估（未区分口径）。中芯研发 53万 为研发整体（含器件）上限锚。"
+    },
+    {
+      "direction": "EDA研发工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 50,
+      "p25_wan": 40,
+      "p75_wan": 65,
+      "annual_months": 14,
+      "rarity_factor": 1.2,
+      "evidence": "中",
+      "sources": [
+        {"title": "概伦电子 2023 年报：研发人员平均薪酬 42.90 万/年（2022 为 45.31 万）", "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?stockid=688206&id=9967398", "type": "annual_report", "year": 2023},
+        {"title": "eefocus：EDA/良率/测试岗位（上海/杭州）应届 28-42万、资深 70-130万", "url": "https://www.eefocus.com/article/2054213.html", "type": "media", "year": 2024},
+        {"title": "猎聘：封装EDA产品工程师 20-40k/月", "url": "https://m.liepin.com/zpfzedacpgcsr23t/", "type": "job_posting", "year": 2025}
+      ],
+      "notes": "概伦研发平均 42.9万（全经验，含应届拉低）→ 3-5年 取 50万；资深 70-130万 为 P75+。原型 60万 略偏高。"
+    },
+    {
+      "direction": "芯片测试工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 40,
+      "p25_wan": 32,
+      "p75_wan": 52,
+      "annual_months": 13,
+      "rarity_factor": 1.0,
+      "evidence": "中",
+      "sources": [
+        {"title": "eefocus：测试岗位（上海/杭州）应届 28-42万、资深 70-130万", "url": "https://www.eefocus.com/article/2054213.html", "type": "media", "year": 2024},
+        {"title": "集成电路行业人才洞察报告2024：测试岗位薪酬下降", "url": "https://laoyaoba.com/html/share/news/930796", "type": "industry_report_news", "year": 2024},
+        {"title": "jobui：全国 ATE 测试工程师聚合页（无分位）", "url": "https://www.jobui.com/salary/quanguo-atexinpianceshigongchengshi/", "type": "job_site", "year": 2024}
+      ],
+      "notes": "应届 28-42万 + 2024 下降 → 3-5年 P50 取 40万；ATE 平台经验（V93K 等）方向内溢价。"
+    },
+    {
+      "direction": "封装工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 36,
+      "p25_wan": 28,
+      "p75_wan": 46,
+      "annual_months": 13,
+      "rarity_factor": 1.1,
+      "evidence": "弱",
+      "sources": [
+        {"title": "长电科技 2023 年报：员工人均薪酬 19.01 万/年（含生产人员，偏低口径）", "url": "https://stock.stockstar.com/RB2024041800036518.shtml", "type": "annual_report", "year": 2023},
+        {"title": "长电科技人均工资 22 万+（自媒体口径）", "url": "https://m.toutiao.com/article/7599202782625546779/", "type": "media", "year": 2024}
+      ],
+      "notes": "长电人均含生产人员（偏低），封测厂整体低于设计公司；但先进封装（CoWoS/2.5D/3D）方向稀缺溢价明显。上海 3-5年 取 36万；原型 44万 偏高。"
+    },
+    {
+      "direction": "器件工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 45,
+      "p25_wan": 35,
+      "p75_wan": 58,
+      "annual_months": 14,
+      "rarity_factor": 1.1,
+      "evidence": "弱",
+      "sources": [
+        {"title": "jobui：深圳半导体器件工程师聚合页（无公开精确数字）", "url": "https://www.jobui.com/salary/shenzhen-qijiangongchengshi/ind-bandaoti/", "type": "job_site", "year": 2024},
+        {"title": "jobui：器件研发工程师聚合页（无公开精确数字）", "url": "https://www.jobui.com/company/11731330/salary/j/qijianyanfagongchengshi/exp0/", "type": "job_site", "year": 2024}
+      ],
+      "notes": "无公开精确数字，按与工艺/模拟之间关系估计；功率器件（GaN/SiC/IGBT）方向随新能源/汽车电子溢价明显。"
+    },
+    {
+      "direction": "设备工程师",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 32,
+      "p25_wan": 25,
+      "p75_wan": 40,
+      "annual_months": 14,
+      "rarity_factor": 1.0,
+      "evidence": "弱",
+      "sources": [
+        {"title": "集成电路行业人才洞察报告2024：设备与工艺工程师薪酬正增长（+7~8%）", "url": "http://www.c114.net.cn/chip/118462.html", "type": "industry_report_news", "year": 2024}
+      ],
+      "notes": "派生估计：洞察报告口径工艺+设备平均约20万（全国全经验口径），上海 3-5年 取 32万；设备为 2024 唯一正增长方向之一。"
+    },
+    {
+      "direction": "工艺整合PIE",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 40,
+      "p25_wan": 32,
+      "p75_wan": 50,
+      "annual_months": 14,
+      "rarity_factor": 1.1,
+      "evidence": "弱",
+      "sources": [
+        {"title": "集成电路行业人才洞察报告2024：工艺工程师薪酬正增长", "url": "http://www.c114.net.cn/chip/118462.html", "type": "industry_report_news", "year": 2024}
+      ],
+      "notes": "派生估计：由工艺工程师（36万）× 1.1（整合岗高于模块岗）推算；弱证据，建议第三方报告锚点。"
+    },
+    {
+      "direction": "芯片固件/嵌入式",
+      "experience_band": "3-5年",
+      "city": "上海",
+      "cash_p50_wan": 38,
+      "p25_wan": 30,
+      "p75_wan": 50,
+      "annual_months": 13,
+      "rarity_factor": 1.0,
+      "evidence": "弱",
+      "sources": [
+        {"title": "佰维存储中/高级嵌入式软件工程师招聘（无聚合薪酬数字）", "url": "https://quanzhi.com/job/674eb62f84c47b47fb3b46b391", "type": "job_posting", "year": 2024},
+        {"title": "集成电路行业人才洞察报告2024：软件类岗位薪酬下降", "url": "https://laoyaoba.com/html/share/news/930796", "type": "industry_report_news", "year": 2024}
+      ],
+      "notes": "无公开聚合数字；软件类 2024 下降；与互联网嵌入式存在岗位名歧义（附录 C.2），解析时需过滤。"
+    }
+  ],
+  "coverage_gaps": [
+    "无任何公开来源给出 P25/P50/P75 分位矩阵与『经验段×城市』完整矩阵——分位值为本数据集估计，需第三方报告锚点或贡献-回报网络校准",
+    "城市差异仅有『北京平均招聘年薪超30万』一个硬数字（http://finance.sina.com.cn/roll/2024-02-26/doc-inakkcyk1338178.shtml）；苏州/无锡/合肥/成都/西安仅有报告存在性证据（集微咨询热点城市报告、合肥人才发展报告），需各地人社局指导价校准",
+    "器件/固件/版图/数字后端无公开精确数字（弱证据）",
+    "所有数字为 2023-2024 口径，2025 需季度刷新",
+    "招聘开价类来源（脉脉/拉勾/猎聘）高于实发 10-20%，已按此下修处理"
+  ],
+  "key_findings": [
+    "【模拟IC】原型 P50=58万 偏高 10-20%，真实 P50 约 48-55万（猎聘洞察 40-50万 + 职位区间下修）→ 校准 50万；电源/高速接口+15薪高端仍可达 60-70万",
+    "【工艺/设备】《集成电路行业人才洞察报告2024》唯一逆势上涨（+7~8%），但全经验平均仅约 20万/年 → 原型对工艺工程师（45万）与设备工程师（40万）明显高估，校准为 36/32万",
+    "【封测】长电人均 19-22万（含生产人员）显示封测整体偏低，但先进封装（CoWoS/2.5D/3D）稀缺溢价显著——需按『传统封装 vs 先进封装』拆分",
+    "【上市公司年报口径（高可信）】概伦研发平均 42.9万、中芯研发平均 53万（含器件，高端锚）、长电人均 19-22万",
+    "【2024 分化】工艺/设备↑；模拟/数字前后端/测试/软件↓——原型趋势标注需相应修正",
+    "【招聘开价偏差】脉脉均值 67728元/月（≈81万/年）、拉勾 50-69k 均为招聘开价且含全经验段，不能直接当 3-5年 分位使用",
+    "【城市数据缺口】除北京 30万+ 外无硬数据——城市系数（上海=1.0 基准）仍需政府指导价校准"
+  ]
+}

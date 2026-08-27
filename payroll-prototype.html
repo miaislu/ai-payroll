@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 薪酬管理系统 · 交互原型</title>
+<style>
+:root{
+  --bg:#f4f6fa; --card:#fff; --line:#e5e9f0; --text:#1c2430; --muted:#6b7686;
+  --accent:#2f54eb; --accent-weak:#eef2ff; --ok:#16a34a; --warn:#d97706; --bad:#dc2626;
+  --sidebar:#101828; --side-text:#9aa4b5; --side-active:#fff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+/* ── Layout ── */
+#app{display:flex;min-height:100vh}
+#sidebar{width:216px;background:var(--sidebar);color:var(--side-text);padding:16px 10px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;padding:8px 10px 18px;color:#fff;font-weight:700;font-size:15px}
+.logo .dot{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#2f54eb,#0ea5e9);display:flex;align-items:center;justify-content:center;font-size:14px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;user-select:none;transition:background .15s}
+.nav-item:hover{background:#1c2536}
+.nav-item.active{background:#2f54eb22;color:var(--side-active)}
+.nav-item .ico{width:18px;text-align:center}
+.nav-sep{font-size:11px;color:#55607a;padding:14px 12px 6px;letter-spacing:1px}
+#main{flex:1;padding:20px 28px 60px;min-width:0}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.page-title h1{font-size:20px;font-weight:700}
+.page-title p{color:var(--muted);font-size:12.5px;margin-top:3px}
+.role-switch{display:flex;background:#e8ecf3;border-radius:8px;padding:3px;gap:2px}
+.role-switch button{border:0;background:transparent;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;color:var(--muted)}
+.role-switch button.active{background:#fff;color:var(--text);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+/* ── Components ── */
+.page{display:none}
+.page.active{display:block;animation:fade .18s}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h3{font-size:14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)}
+.kpi{padding:14px 16px}
+.kpi .label{color:var(--muted);font-size:12px}
+.kpi .num{font-size:24px;font-weight:700;margin:4px 0 2px}
+.kpi .sub{font-size:12px}
+.up{color:var(--bad)} .down{color:var(--ok)} .flat{color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
+td{padding:9px 10px;border-bottom:1px solid #f0f2f7;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:500}
+.chip.ok{background:#e8f7ee;color:var(--ok)} .chip.warn{background:#fdf1e0;color:var(--warn)}
+.chip.bad{background:#fdeaea;color:var(--bad)} .chip.info{background:var(--accent-weak);color:var(--accent)}
+.chip.gray{background:#eef1f5;color:var(--muted)}
+.btn{border:1px solid var(--line);background:#fff;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text)}
+.btn:hover{border-color:#c7d0e0}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+select,input[type=number],input[type=text]{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;background:#fff;color:var(--text)}
+label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+.toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+.hint{font-size:12px;color:var(--muted);line-height:1.7}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar-row{display:grid;grid-template-columns:110px 1fr 70px;gap:10px;align-items:center;font-size:12.5px}
+.bar-track{position:relative;background:#eef1f5;height:16px;border-radius:8px;overflow:visible}
+.bar-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#2f54eb,#38bdf8)}
+.bar-ref{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--warn);z-index:2}
+.bar-ref::after{content:attr(data-label);position:absolute;top:-16px;left:-22px;font-size:10px;color:var(--warn);white-space:nowrap}
+.attrib{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #eef0f5;font-size:13px}
+.attrib:last-child{border-bottom:0}
+.attrib b{color:var(--bad)}
+/* band card */
+.band{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.band .b{background:#f7f9fc;border-radius:10px;padding:12px;text-align:center}
+.band .b .t{font-size:12px;color:var(--muted)}
+.band .b .v{font-size:19px;font-weight:700;margin-top:4px}
+.band .b.p50{background:var(--accent-weak)}
+/* chat */
+.chat{height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px}
+.msg{max-width:78%;padding:10px 13px;border-radius:12px;font-size:13.5px;line-height:1.7;white-space:pre-wrap}
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.msg.ai{align-self:flex-start;background:#f0f3fa;border-bottom-left-radius:4px}
+.msg .src{display:block;margin-top:7px;font-size:11.5px;color:var(--accent);cursor:pointer}
+.chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.chat-input{display:flex;gap:8px;margin-top:12px}
+.chat-input input{flex:1}
+/* option sim */
+.sim-grid{display:grid;grid-template-columns:320px 1fr;gap:14px}
+.slider-row{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:12.5px}
+.slider-row input[type=range]{flex:1}
+.slider-row .val{width:52px;text-align:right;font-weight:600}
+.result-band{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0}
+.result-band .rb{background:#f7f9fc;border-radius:10px;padding:14px;text-align:center}
+.result-band .rb .t{font-size:12px;color:var(--muted)}
+.result-band .rb .v{font-size:22px;font-weight:700;margin-top:6px}
+.result-band .rb.cons .v{color:var(--muted)}
+.result-band .rb.mid .v{color:var(--accent)}
+.result-band .rb.opt .v{color:var(--ok)}
+.equiv{display:flex;align-items:center;gap:14px;background:var(--accent-weak);border-radius:10px;padding:12px 16px;margin-top:6px}
+.equiv .big{font-size:22px;font-weight:700;color:var(--accent)}
+/* payslip */
+.payslip-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#2f54eb,#38bdf8);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+.money-table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.money-table .total-row td{font-weight:700;border-top:2px solid var(--line)}
+/* toast & modal */
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:#101828;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99}
+#toast.show{opacity:1;transform:translateX(-50%)}
+#modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:50}
+#modal-bg.show{display:flex}
+.modal{background:#fff;border-radius:14px;padding:20px;width:440px;max-width:92vw}
+.modal h3{margin-bottom:12px}
+.modal textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:90px;font-size:13px;font-family:inherit;resize:vertical}
+.modal .row{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+/* floating copilot */
+#fab{position:fixed;right:26px;bottom:26px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#2f54eb,#0ea5e9);color:#fff;border:0;font-size:22px;cursor:pointer;box-shadow:0 6px 18px rgba(47,84,235,.4);z-index:40}
+#fab:hover{transform:scale(1.06)}
+footer{position:fixed;left:216px;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:7px 28px;font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;z-index:30}
+footer .dot-live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.sd-ok{background:var(--ok)} .sd-warn{background:var(--warn)} .sd-bad{background:var(--bad)}
+.badge{background:var(--bad);color:#fff;font-size:11px;padding:1px 7px;border-radius:999px;margin-left:auto;font-weight:600}
+.stepper{display:flex;gap:8px;flex-wrap:wrap}
+.step{font-size:12px;padding:6px 12px;border-radius:999px;background:#eef1f5;color:var(--muted)}
+.step.done{background:#e8f7ee;color:var(--ok)}
+.step.current{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.apr-item{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px dashed #eef0f5}
+.apr-item:last-child{border-bottom:0}
+.offer-split{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+.offer-split .os{background:#f7f9fc;border-radius:10px;padding:12px;text-align:center}
+.offer-split .os .t{font-size:12px;color:var(--muted)}
+.offer-split .os .v{font-size:18px;font-weight:700;margin-top:4px}
+@media (max-width:1000px){.g4{grid-template-columns:repeat(2,1fr)}.sim-grid{grid-template-columns:1fr}.offer-split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="logo"><span class="dot">薪</span>AI 薪酬 · 半导体</div>
+    <div class="nav-item active" data-page="dashboard" data-role="all"><span class="ico">📊</span>总览</div>
+    <div class="nav-item" data-page="benchmark" data-role="all"><span class="ico">🎯</span>对标与带宽</div>
+    <div class="nav-item" data-page="payroll" data-role="hr"><span class="ico">🧮</span>算薪工作台</div>
+    <div class="nav-item" data-page="copilot" data-role="all"><span class="ico">💬</span>AI 助手</div>
+    <div class="nav-item" data-page="option" data-role="all"><span class="ico">📈</span>期权模拟</div>
+    <div class="nav-item" data-page="approvals" data-role="all"><span class="ico">✅</span>审批中心<span class="badge" id="nav-badge">4</span></div>
+    <div class="nav-sep">员工与治理</div>
+    <div class="nav-item" data-page="payslip" data-role="emp"><span class="ico">🧾</span>员工薪酬单</div>
+    <div class="nav-item" data-page="settings" data-role="hr"><span class="ico">⚙️</span>知识库 / 设置</div>
+  </aside>
+
+  <main id="main">
+    <div class="topbar">
+      <div class="page-title"><h1 id="ptitle">总览</h1><p id="psub">创始人视角 · 演示数据</p></div>
+      <div class="role-switch" id="roleSwitch">
+        <button data-role="founder" class="active">创始人</button>
+        <button data-role="hr">HR</button>
+        <button data-role="emp">员工</button>
+      </div>
+    </div>
+
+    <!-- P1 总览 -->
+    <section class="page active" id="page-dashboard">
+      <div class="grid g4">
+        <div class="card kpi"><div class="label">本月薪酬成本</div><div class="num">¥1,240,000</div><div class="sub up">环比 +8.2%</div></div>
+        <div class="card kpi"><div class="label">带宽穿透率</div><div class="num">4.2%</div><div class="sub flat">健康（阈值 &lt;10%）</div></div>
+        <div class="card kpi"><div class="label">待审批事项</div><div class="num">3</div><div class="sub warn">调薪×2 · 期权×1</div></div>
+        <div class="card kpi"><div class="label">本月算薪状态</div><div class="num" style="font-size:17px;padding-top:6px"><span class="chip ok">✓ 已发放</span></div><div class="sub flat">人工复核 1.5 小时</div></div>
+      </div>
+      <div class="card">
+        <h3>薪酬成本趋势（近 6 个月）<span class="chip warn">6 月 124 万（+8.8%）</span></h3>
+        <div id="chart-cost"></div>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h3>成本环比 +8.2% 归因 <span class="hint">AI 自动归因</span></h3>
+          <div class="attrib"><span>新招聘 5 人（5-6 月入职）</span><b>+5.1%</b></div>
+          <div class="attrib"><span>2 人调薪（P5→P6 生效）</span><b>+2.3%</b></div>
+          <div class="attrib"><span>社保基数年度调整</span><b>+0.8%</b></div>
+          <div class="attrib"><span>期权行权个税代扣</span><b>+0.1%</b></div>
+          <div class="attrib"><span>离职结算（1 人）</span><b>-0.1%</b></div>
+        </div>
+        <div class="card">
+          <h3>薪资分布（按职级 · 现金 P50 参考）</h3>
+          <div id="chart-dist"></div>
+          <div class="hint" style="margin-top:10px">参考线 = 模拟IC设计工程师（上海 · 3-5 年）市场 P50；P6 已接近带宽上限，定薪需谨慎</div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h3>成本预测 <span class="hint">基于当前带宽 + 招聘计划</span></h3>
+          <div class="hint">Q3 扩至 60 人（+8 工程师）：<b style="color:var(--accent)">月薪酬成本 ≈ ¥1.62M</b>（+30.6%）</div>
+          <div class="hint" style="margin-top:8px">其中模拟/EDA 稀缺方向 3 人按带宽 P75 预留。敏感性：若按 P50 定薪可节省 4.8 万/月。</div>
+          <div style="margin-top:12px"><button class="btn sm" onclick="goto('copilot')">问 AI：这个季度成本涨在哪里？</button></div>
+        </div>
+        <div class="card">
+          <h3>留才预警 <span class="chip warn">2 人</span></h3>
+          <table>
+            <tr><th>员工</th><th>岗位</th><th>薪酬分位</th><th>绩效</th><th>风险</th></tr>
+            <tr><td>王**</td><td>模拟IC设计</td><td>P18（低于带宽）</td><td>S</td><td><span class="chip bad">高</span></td></tr>
+            <tr><td>李**</td><td>EDA 工具</td><td>P30</td><td>A</td><td><span class="chip warn">中</span></td></tr>
+          </table>
+          <div class="hint" style="margin-top:8px">建议：王** 优先调薪至 P50 并评估期权加授（见期权模拟）。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- P2 对标与带宽 -->
+    <section class="page" id="page-benchmark">
+      <div class="card">
+        <div class="toolbar">
+          <label class="f">岗位方向
+            <select id="bm-direction"></select></label>
+          <label class="f">城市<select id="bm-city"></select></label>
+          <label class="f">经验<select id="bm-exp"></select></label>
+          <label class="f">公司类型<select id="bm-type"></select></label>
+          <label class="f">融资轮次<select id="bm-stage"></select></label>
+          <button class="btn primary" onclick="runBenchmark()">查询对标</button>
+        </div>
+        <div class="hint">数据源：猎聘 / Boss直聘 / 智联 近 90 天聚合（附录 A）· 岗位归一化（附录 C）· LLM 解析（附录 D）</div>
+      </div>
+      <div class="card" id="bm-result">
+        <h3>带宽卡片 <span class="chip info" id="bm-confidence">置信度：中</span></h3>
+        <div style="font-size:13px;color:var(--muted)" id="bm-title">模拟IC设计工程师 · 上海 · 3-5 年 · Fabless（B轮）</div>
+        <div class="band">
+          <div class="b"><div class="t">现金 P25</div><div class="v" id="bm-p25">—</div></div>
+          <div class="b p50"><div class="t">现金 P50</div><div class="v" id="bm-p50">—</div></div>
+          <div class="b"><div class="t">现金 P75</div><div class="v" id="bm-p75">—</div></div>
+        </div>
+        <div class="grid g2">
+          <div>
+            <div class="hint">总包（含期权预期，按 <span id="bm-stage-name">B轮</span> 估值）：<b id="bm-total">—</b> 万/年</div>
+            <div class="hint" style="margin-top:4px">稀缺性系数：<b id="bm-rarity">—</b> · 趋势（3 个月）：<b id="bm-trend">—</b></div>
+            <div class="hint" style="margin-top:4px">样本：<b id="bm-sample">—</b> 条（面议按回归估计 <span id="bm-hidden">—</span>%）</div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;align-items:flex-end">
+            <button class="btn sm" onclick="toast('已加入对比列表（原型演示）')">加入对比</button>
+            <button class="btn sm primary" onclick="toast('带宽草稿已生成，请在审批中心确认（原型演示）')">生成带宽</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>市场趋势 <span class="hint" id="trend-title">模拟IC设计 · 上海 · 近 12 个月 P50</span></h3>
+        <div id="chart-trend"></div>
+        <div class="hint" style="margin-top:8px">趋势标注已按《集成电路行业人才洞察报告2024》校准：工艺/设备↑、模拟/数字前后端/测试/软件↓（详见 benchmark-data/benchmark-dataset.json）。曲线为示意走势。</div>
+      </div>
+    </section>
+
+    <!-- P3 算薪工作台 -->
+    <section class="page" id="page-payroll">
+      <div class="toolbar">
+        <label class="f">核算月份<select id="payroll-month">
+          <option>2025-06</option><option>2025-05</option><option>2025-04</option></select></label>
+        <span class="chip ok" id="pp-status">AI 预检通过</span>
+        <span class="hint" id="pp-diff">本月差异：2 社保基数调整 · 1 转正 · 1 离职结算</span>
+        <div style="flex:1"></div>
+        <button class="btn" onclick="toast('已生成：个税申报.xlsx · 社保申报.xlsx · 代发.txt（原型演示）')">导出申报/代发</button>
+        <button class="btn primary" id="btn-submit" onclick="submitPayroll()">提交财务复核</button>
+      </div>
+      <div class="card">
+        <table>
+          <tr><th>员工</th><th>基本</th><th>绩效</th><th>加班</th><th>扣款</th><th>社保/公积金</th><th>个税</th><th>实发</th><th>差异标记</th></tr>
+          <tr>
+            <td>张三 <span class="chip gray">P5</span></td><td>25,000</td><td>8,000</td><td>0</td><td>0</td><td>-3,950</td><td>-2,310</td><td><b>30,690</b></td>
+            <td><span class="chip warn" onclick="toggleRow(this)" style="cursor:pointer">社保基数调整 ▸</span></td>
+          </tr>
+          <tr class="row-detail" style="display:none"><td colspan="9" style="background:#fafbfe"><span class="hint">AI 差异说明：本月社保基数按 2025 年新基数（下限 ¥6,120）调整，个人部分 +¥210，已校验与政策一致（来源：深圳市社保局 2025 基数通知）。</span></td></tr>
+          <tr>
+            <td>李四 <span class="chip gray">P4</span></td><td>18,000</td><td>3,000</td><td>4,200</td><td>0</td><td>-3,240</td><td>-1,880</td><td><b>23,320</b></td>
+            <td><span class="chip ok">转正生效</span></td>
+          </tr>
+          <tr>
+            <td>王五 <span class="chip gray">P6</span></td><td colspan="4">离职结算（6/15 离职 · 含 N+1 补偿 38,400）</td><td>-2,960</td><td>-8,900</td><td><b>58,240</b></td>
+            <td><span class="chip warn">离职结算</span></td>
+          </tr>
+          <tr>
+            <td>赵六 <span class="chip gray">P4</span></td><td>19,000</td><td>2,000</td><td>0</td><td>-500</td><td>-3,320</td><td>-1,940</td><td><b>16,240</b></td>
+            <td><span class="chip bad" onclick="toggleRow(this)" style="cursor:pointer">加班费存疑 ▸</span></td>
+          </tr>
+          <tr class="row-detail" style="display:none"><td colspan="9" style="background:#fafbfe"><span class="hint">⚠️ 合规预检：赵六 6/14（周六）加班 8 小时按 1.5 倍计算，建议核对是否为休息日（应为 2 倍）。来源：《劳动法》第 44 条。已阻断确认，请 HR 处理。</span></td></tr>
+          <tr class="total-row"><td>合计（47 人）</td><td>860,000</td><td>210,000</td><td>42,000</td><td>-12,000</td><td>-186,000</td><td>-98,000</td><td><b>1,240,000</b></td><td><span class="chip ok">个税倒推 ✓</span></td></tr>
+        </table>
+        <div class="hint" style="margin-top:10px">校验项：总额 vs 上月 +8.2% ✓ · 人均 vs 带宽 ✓ · 最低工资 ✓ · 个税倒推 ✓ · 待处理 1（加班费存疑）</div>
+      </div>
+    </section>
+
+    <!-- P4 Copilot -->
+    <section class="page" id="page-copilot">
+      <div class="card">
+        <h3>AI 薪酬助手 <span class="chip info">知识库：制度 12 篇 · 政策 87 条</span></h3>
+        <div class="chip-row">
+          <button class="btn sm" onclick="ask('深圳员工试用期工资和社保基数怎么算？')">试用期工资/社保</button>
+          <button class="btn sm" onclick="ask('加班费倍数怎么算？')">加班费</button>
+          <button class="btn sm" onclick="ask('期权递延纳税需要什么条件？')">期权递延纳税</button>
+          <button class="btn sm" onclick="ask('半导体人才补贴有哪些？')">人才补贴</button>
+        </div>
+        <div class="chat" id="chat">
+          <div class="msg ai">你好，我是 AI 薪酬助手。可以问我制度、政策、薪酬计算口径等问题，回答都会附上来源。</div>
+        </div>
+        <div class="chat-input">
+          <input type="text" id="chat-input" placeholder="输入问题，例如：离职当月社保怎么算？" onkeydown="if(event.key==='Enter')sendChat()">
+          <button class="btn primary" onclick="sendChat()">发送</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- P5 期权模拟 -->
+    <section class="page" id="page-option">
+      <div class="sim-grid">
+        <div class="card">
+          <h3>授予信息</h3>
+          <div class="slider-row"><span style="width:70px">授予股数</span><input type="number" id="opt-n" value="10" min="1" step="1" style="width:90px"><span>万股</span></div>
+          <div class="slider-row"><span style="width:70px">行权价</span><input type="number" id="opt-k" value="0.5" min="0" step="0.1" style="width:90px"><span>元/股</span></div>
+          <div class="slider-row"><span style="width:70px">投后估值</span><input type="number" id="opt-v0" value="20" min="1" step="1" style="width:90px"><span>亿元</span></div>
+          <div class="slider-row"><span style="width:70px">总股本</span><input type="number" id="opt-shares" value="2500" min="100" step="100" style="width:90px"><span>万股</span></div>
+          <div class="slider-row"><span style="width:70px">未来稀释</span><input type="number" id="opt-dil" value="30" min="0" max="60" step="5" style="width:90px"><span>%</span></div>
+          <div class="slider-row"><span style="width:70px">归属年限</span><input type="number" id="opt-vest" value="4" min="1" max="6" step="1" style="width:90px"><span>年</span></div>
+          <div class="slider-row"><span style="width:70px">流动性折价</span><input type="range" id="opt-lq" min="0.5" max="1" step="0.05" value="0.7"><span class="val" id="lq-val">0.70</span></div>
+          <div style="margin-top:10px" class="hint">税负模式</div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn sm primary" id="tax-delay" onclick="setTax(true)">递延（转让时 20%）</button>
+            <button class="btn sm" id="tax-nodelay" onclick="setTax(false)">非递延（行权时累进）</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>场景与概率 <span class="hint">半导体行业参考区间，可调（附录 E.5）</span></h3>
+          <div class="slider-row"><span style="width:70px">IPO（科创板等）</span><input type="range" id="p-ipo" min="0" max="60" value="10"><span class="val" id="p-ipo-v">10%</span></div>
+          <div class="slider-row"><span style="width:70px">被并购</span><input type="range" id="p-acq" min="0" max="60" value="15"><span class="val" id="p-acq-v">15%</span></div>
+          <div class="slider-row"><span style="width:70px">继续持有</span><input type="range" id="p-hold" min="0" max="80" value="45"><span class="val" id="p-hold-v">45%</span></div>
+          <div class="slider-row"><span style="width:70px">失败/僵死</span><input type="range" id="p-fail" min="0" max="80" value="30"><span class="val" id="p-fail-v">30%</span></div>
+          <div class="slider-row"><span style="width:70px">IPO 退出倍数</span><input type="range" id="m-ipo" min="1" max="8" step="0.5" value="3"><span class="val" id="m-ipo-v">3.0x</span></div>
+          <div class="slider-row"><span style="width:70px">并购退出倍数</span><input type="range" id="m-acq" min="0.5" max="4" step="0.5" value="1.8"><span class="val" id="m-acq-v">1.8x</span></div>
+          <div class="hint" style="margin-top:6px">概率会自动归一化到 100%。⚠️ 结果为区间而非承诺，对假设高度敏感（附录 E.5 诚实性设计）。</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>模拟结果 <span class="chip info" id="tax-label">税负模式：递延（转让时 20%）</span></h3>
+        <div class="result-band">
+          <div class="rb cons"><div class="t">保守</div><div class="v" id="r-cons">—</div><div class="t">万（税后）</div></div>
+          <div class="rb mid"><div class="t">中性（期望）</div><div class="v" id="r-mid">—</div><div class="t">万（税后）</div></div>
+          <div class="rb opt"><div class="t">乐观</div><div class="v" id="r-opt">—</div><div class="t">万（税后）</div></div>
+        </div>
+        <div class="equiv">
+          <div><div class="t" style="font-size:12px;color:var(--muted)">≈ 等值现金年薪（按归属期 + 流动性折价）</div><div class="big" id="r-equiv">—</div></div>
+          <div style="flex:1"></div>
+          <div style="text-align:right;font-size:12px;color:var(--muted)">敏感性：退出估值 ×2 → 中性值 <b id="r-sens" style="color:var(--accent)">—</b><br>条款：离职 180 天行权窗口 · 并购双触发加速</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>敏感性：中性期权价值 vs IPO 退出倍数 <span class="hint">拖动上方概率/倍数实时联动</span></h3>
+        <div id="chart-sens"></div>
+        <div class="hint" style="margin-top:8px">曲线越陡，说明价值对 IPO 估值假设越敏感——和候选人谈期权时，优先对齐"估值预期"而非纠结股数。</div>
+      </div>
+    </section>
+
+    <!-- P6 员工薪酬单 -->
+    <section class="page" id="page-payslip">
+      <div class="card">
+        <div class="payslip-head">
+          <div class="avatar">张</div>
+          <div>
+            <div style="font-weight:700;font-size:15px">张三 · 模拟IC设计工程师（P5）</div>
+            <div style="color:var(--muted);font-size:12px">2025-06 · 仅自己可见 · <span class="chip ok">已发放</span></div>
+          </div>
+        </div>
+        <table class="money-table">
+          <tr><td>基本工资</td><td>25,000</td></tr>
+          <tr><td>绩效奖金</td><td>8,000</td></tr>
+          <tr><td>加班费</td><td>0</td></tr>
+          <tr><td>社保（个人）</td><td>-2,450</td></tr>
+          <tr><td>公积金（个人）</td><td>-1,500</td></tr>
+          <tr><td>个人所得税</td><td>-2,310</td></tr>
+          <tr class="total-row"><td>实发工资</td><td>30,690</td></tr>
+        </table>
+        <div style="margin-top:12px;background:#f7f9fc;border-radius:10px;padding:12px">
+          <b style="font-size:13px">🤖 AI 解读</b>
+          <div class="hint" style="margin-top:5px">本月社保基数按 2025 年新基数调整，个人部分 +210 元；个税同比 -180 元（因专项附加扣除更新）。实发与 5 月基本持平。</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn" onclick="goto('copilot')">问 AI：为什么扣了这么多税？</button>
+          <button class="btn primary" onclick="openAppeal()">有疑问？申诉给 HR</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>我的期权 <span class="chip info">已归属 25%</span></h3>
+        <div class="hint">授予：10 万股 · 行权价 0.5 元 · 4 年归属（1 年 cliff）</div>
+        <div class="hint" style="margin-top:6px">最新估值（B 轮）：8 元/股。当前行权价值：<b style="color:var(--accent)">≈ 52.5 万</b>（按 25% 已归属 × 5.3 万股 × 7.5 元价差，未扣税）</div>
+        <div style="margin-top:10px"><button class="btn sm" onclick="goto('option')">用模拟器看看完整价值</button></div>
+      </div>
+    </section>
+
+    <!-- 知识库/设置 -->
+    <section class="page" id="page-settings">
+      <div class="grid g3">
+        <div class="card">
+          <h3>📖 岗位词典 <span class="chip ok">v1.3</span></h3>
+          <div class="hint">规范岗位 24 类 · 同义词 428 条 · 消歧规则 8 条<br>本周 LLM 建议新增 6 条（待审核）</div>
+          <button class="btn sm" style="margin-top:10px" onclick="toast('打开词典审核（原型演示）')">审核新增词条</button>
+        </div>
+        <div class="card">
+          <h3>🏛️ 政策知识库 <span class="chip ok">87 条</span></h3>
+          <div class="hint">个税 / 社保 / 公积金 / 人才补贴 / 劳动法<br>最后更新：2025-06-15（个税专项附加扣除）</div>
+          <button class="btn sm" style="margin-top:10px" onclick="toast('打开政策库（原型演示）')">管理政策库</button>
+        </div>
+        <div class="card">
+          <h3>🛰️ 对标数据源</h3>
+          <div class="hint"><span class="status-dot sd-ok"></span>猎聘 · 正常（今日 +312 条）</div>
+          <div class="hint"><span class="status-dot sd-ok"></span>Boss直聘 · 正常（今日 +480 条）</div>
+          <div class="hint"><span class="status-dot sd-warn"></span>智联 · 限速中（降级轮询）</div>
+          <div class="hint"><span class="status-dot sd-bad"></span>拉勾 · 已停用（对方更新反爬）</div>
+          <div class="hint" style="margin-top:8px">合规开关：收到风险信号自动切换数据源（附录 A.2）</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>权限与审计 <span class="chip info">行级权限已启用</span></h3>
+        <table>
+          <tr><th>角色</th><th>可见范围</th><th>关键操作</th></tr>
+          <tr><td>创始人</td><td>全部</td><td>审批 · 期权模拟 · 仪表盘</td></tr>
+          <tr><td>HR</td><td>薪酬档案（脱敏展示）</td><td>算薪 · 对标 · 申报 · 员工资料</td></tr>
+          <tr><td>财务</td><td>工资单汇总 + 复核</td><td>复核 · 代发导出</td></tr>
+          <tr><td>员工</td><td>仅本人薪酬单/期权</td><td>问薪 · 申诉</td></tr>
+        </table>
+        <div class="hint" style="margin-top:8px">全部写操作留审计日志；员工端只读本人数据（《个人信息保护法》最小化原则）。</div>
+      </div>
+    </section>
+
+    <!-- 审批中心 -->
+    <section class="page" id="page-approvals">
+      <div class="card">
+        <h3>待我审批 <span class="chip warn" id="pending-count">4 项</span></h3>
+        <div id="approval-list"></div>
+      </div>
+      <div class="card">
+        <h3>已完成</h3>
+        <div id="approval-done"></div>
+      </div>
+    </section>
+
+    <!-- F1 带宽审批 -->
+    <section class="page" id="page-band-approval">
+      <div class="card">
+        <div class="stepper" id="stepper-band">
+          <div class="step done">① HR 发起</div><div class="step done">② AI 草稿生成</div><div class="step current">③ 创始人审批</div><div class="step">④ 固化生效</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>带宽刷新 · 模拟IC设计（上海 · 3-5 年）<span class="chip info">A-101</span></h3>
+        <table>
+          <tr><th>分位</th><th>当前带宽</th><th>AI 草稿</th><th>市场参考（近 90 天）</th><th>调整</th></tr>
+          <tr><td>P25</td><td>45万</td><td>48万</td><td>46-50万</td><td class="up">+6.7%</td></tr>
+          <tr><td>P50</td><td>58万</td><td><input type="number" id="band-p50" value="62" min="50" max="80" style="width:70px"> 万</td><td>58-65万</td><td class="up">+6.9%</td></tr>
+          <tr><td>P75</td><td>75万</td><td>82万</td><td>76-86万</td><td class="up">+9.3%</td></tr>
+        </table>
+        <div style="margin-top:10px;background:#f7f9fc;border-radius:10px;padding:12px">
+          <b style="font-size:13px">🤖 AI 依据</b>
+          <div class="hint" style="margin-top:5px">数据源：猎聘/Boss直聘/智联 近 90 天（样本 137 条，面议估 22%）· 趋势 +4.1% · 稀缺性系数 1.15。模拟方向持续供不应求，建议 P50 上调至 62 万。⚠️ 样本量中、置信度中，建议与猎头报告交叉验证。</div>
+        </div>
+        <div class="hint" style="margin-top:8px">影响预览：团队 3 名模拟工程师按新带宽定薪/调薪，年度成本 <b class="up">+约 15 万（+2.1%）</b>。</div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn primary" onclick="approveBand()">同意并固化</button>
+          <button class="btn" onclick="reject('band','A-101')">驳回（附理由）</button>
+          <button class="btn" onclick="toast('已按新 P50 重新生成影响预览（原型演示）')">调整后重新测算</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- F4 调薪审批 -->
+    <section class="page" id="page-raise-approval">
+      <div class="card">
+        <div class="stepper" id="stepper-raise">
+          <div class="step done">① 发起（绩效/留才）</div><div class="step done">② AI 建议</div><div class="step current">③ 创始人审批</div><div class="step">④ 生效</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>调薪申请 · 王**（模拟IC设计 P5）<span class="chip warn">留才预警</span><span class="chip info">A-102</span></h3>
+        <div class="grid g3" style="margin-bottom:10px">
+          <div class="card kpi" style="margin:0"><div class="label">当前年薪</div><div class="num">58万</div><div class="sub flat">带宽 P18（偏低）</div></div>
+          <div class="card kpi" style="margin:0"><div class="label">绩效</div><div class="num" style="color:var(--ok)">S</div><div class="sub flat">连续 2 个周期 S</div></div>
+          <div class="card kpi" style="margin:0"><div class="label">AI 建议</div><div class="num" style="color:var(--accent)">+12%</div><div class="sub flat">65万 ≈ 带宽 P50</div></div>
+        </div>
+        <div style="background:#f7f9fc;border-radius:10px;padding:12px">
+          <b style="font-size:13px">🤖 AI 建议依据</b>
+          <div class="hint" style="margin-top:5px">① 薪酬分位 P18 低于带宽下限，同类岗位中垫底；② 绩效 S + 模拟方向稀缺（系数 1.15）；③ 已在留才预警名单（见总览）。建议调至 P50（65万，+12%），并评估期权加授 0.1% 作为长期绑定。</div>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="opt-extra"> <label style="font-size:13px">同时加授期权 0.1%（等值 ≈ 3.4 万/年，按 B 轮估值模拟）</label>
+        </div>
+        <div class="hint" style="margin-top:10px">影响测算：薪酬总额 <b>+0.5%</b> · 团队中位数不变 · 带宽穿透率 4.2% → <b>4.6%</b>（仍健康）</div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn primary" onclick="approveRaise()">同意调薪</button>
+          <button class="btn" onclick="reject('raise','A-102')">驳回（附理由）</button>
+          <button class="btn" onclick="toast('已发起与 CTO 的补充沟通（原型演示）')">需补充信息</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- F2 Offer 审批 -->
+    <section class="page" id="page-offer-approval">
+      <div class="card">
+        <div class="stepper" id="stepper-offer">
+          <div class="step done">① 招聘需求</div><div class="step done">② AI 对标建议</div><div class="step current">③ 创始人审批</div><div class="step">④ 发出 Offer</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Offer 建议 · 周*（数字后端 P6）<span class="chip info">A-104</span></h3>
+        <div class="hint" style="margin-bottom:8px">候选人画像：7 年经验 · HBM 接口稀缺技能（稀缺性高）· 3 次流片 · 现司（某大厂）总包 88 万</div>
+        <div class="offer-split">
+          <div class="os"><div class="t">现金年薪</div><div class="v">68 万</div><div class="t">带宽 P72 位置</div></div>
+          <div class="os"><div class="t">期权 0.4%</div><div class="v">≈ 27 万</div><div class="t">B 轮估值 · 4 年归属</div></div>
+        </div>
+        <div class="hint">总包：<b style="color:var(--accent)">95 万</b>（现金 68 + 期权 27）· 高于现司总包 +8%，现金部分略低于 P75（82万）阈值，未触发强制升级。</div>
+        <div style="margin-top:10px;background:#f7f9fc;border-radius:10px;padding:12px">
+          <b style="font-size:13px">🤖 AI 建议</b>
+          <div class="hint" style="margin-top:5px">HBM 接口方向招聘周期 3-4 个月，建议现金压至 P70（66万）以留调薪空间，期权维持 0.4%。若候选人坚持 95 万总包，可接受（带宽 P75 内）。</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn primary" onclick="approveOffer()">同意发出 Offer</button>
+          <button class="btn" onclick="toast('已保存调整：现金 66万 / 期权 0.4%，等待 HR 重新生成（原型演示）')">调整总包</button>
+          <button class="btn" onclick="reject('offer','A-104')">驳回</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<button id="fab" onclick="goto('copilot')" title="AI 助手">💬</button>
+<div id="toast"></div>
+<div id="modal-bg">
+  <div class="modal">
+    <h3>薪酬申诉</h3>
+    <p class="hint" style="margin-bottom:8px">提交后 HR 将在 48 小时内人工响应；申诉不影响已发放金额。</p>
+    <textarea id="appeal-text" placeholder="请描述疑问，例如：6 月社保扣款比上月多了 210 元…"></textarea>
+    <div class="row"><button class="btn" onclick="closeAppeal()">取消</button><button class="btn primary" onclick="submitAppeal()">提交申诉</button></div>
+  </div>
+</div>
+
+<script>
+/* ── 导航与角色 ── */
+const pages = {dashboard:['总览','创始人视角 · 演示数据'],benchmark:['对标与带宽','HR 视角 · 招聘定薪与带宽管理'],payroll:['算薪工作台','HR 视角 · 2025-06 核算'],copilot:['AI 助手','制度 + 政策知识库问答'],option:['期权模拟','创始人/HR · 附录 E 算法演示'],approvals:['审批中心','流程与审批 · F1/F2/F4/F5'],'band-approval':['带宽审批','F1 流程 · 2025 下半年带宽刷新'],'raise-approval':['调薪审批','F4 流程 · 王** 调薪申请'],'offer-approval':['Offer 审批','F2 流程 · 周* Offer 建议'],payslip:['员工薪酬单','员工视角 · 仅本人数据'],settings:['知识库 / 设置','管理员视角 · 治理与数据源']};
+const ROLE_VIEWS = {
+  founder:['dashboard','benchmark','payroll','copilot','option','approvals','band-approval','raise-approval','offer-approval','settings'],
+  hr:['dashboard','benchmark','payroll','copilot','option','approvals','band-approval','raise-approval','offer-approval','settings'],
+  emp:['dashboard','copilot','payslip']
+};
+const PARENT = {'band-approval':'approvals','raise-approval':'approvals','offer-approval':'approvals'};
+let currentRole = 'founder';
+function applyRole(role){
+  currentRole = role;
+  const views = ROLE_VIEWS[role];
+  document.querySelectorAll('.nav-item').forEach(n=>{
+    n.style.display = views.includes(n.dataset.page) ? 'flex' : 'none';
+  });
+  document.querySelectorAll('#roleSwitch button').forEach(b=>b.classList.toggle('active', b.dataset.role===role));
+  const cur = document.querySelector('.nav-item.active');
+  if(!cur || cur.style.display==='none') goto(views[0]);
+}
+document.querySelectorAll('#roleSwitch button').forEach(b=>b.onclick=()=>applyRole(b.dataset.role));
+function goto(page){
+  if(!ROLE_VIEWS[currentRole].includes(page)) page = ROLE_VIEWS[currentRole][0]; // 权限兜底
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  const hl = PARENT[page] || page;
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.page===hl));
+  const t = pages[page]; document.getElementById('ptitle').textContent = t[0]; document.getElementById('psub').textContent = t[1];
+  window.scrollTo({top:0});
+  renderCharts(); // 页面可见后再渲染，保证图表宽度正确
+}
+document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>goto(n.dataset.page));
+
+/* ── 通用 ── */
+let toastTimer;
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400);}
+function toggleRow(chip){const tr=chip.closest('tr').nextElementSibling;tr.style.display = tr.style.display==='none'?'table-row':'none';}
+function submitPayroll(){
+  const btn=document.getElementById('btn-submit');
+  if(btn.textContent==='提交财务复核'){
+    btn.textContent='已提交 · 待财务复核';
+    btn.disabled=true;
+    document.getElementById('pp-status').textContent='AI 预检通过 · 待财务复核';
+    toast('已提交财务复核（原型演示：赵六加班费存疑项已在列表中标注）');
+  }
+}
+function openAppeal(){document.getElementById('modal-bg').classList.add('show');}
+function closeAppeal(){document.getElementById('modal-bg').classList.remove('show');}
+function submitAppeal(){const t=document.getElementById('appeal-text').value.trim();closeAppeal();toast(t?('申诉已提交（编号 #A-0617），HR 48h 内响应'):'请填写申诉内容');}
+
+/* ── SVG 图表引擎（零依赖手写）── */
+function fmtChart(v){return v>=1000?(v/1000).toFixed(1)+'k':v>=100?Math.round(v):(Math.round(v*10)/10);}
+function svgChart(id,cfg){
+  const el=document.getElementById(id);
+  if(!el) return;
+  const W=el.clientWidth||560, H=230, padL=46, padR=14, padT=16, padB=28;
+  const iw=W-padL-padR, ih=H-padT-padB;
+  const vals=cfg.data.map(d=>d.value);
+  const rawMin=Math.min.apply(null,vals.concat(cfg.ref?[cfg.ref.value]:[]));
+  const rawMax=Math.max.apply(null,vals.concat(cfg.ref?[cfg.ref.value]:[]));
+  let lo=rawMin, hi=rawMax, span=(hi-lo)||1; lo-=span*0.14; hi+=span*0.14;
+  const X=i=>padL+i/(cfg.data.length-1)*iw;
+  const Y=v=>padT+ih-(v-lo)/(hi-lo)*ih;
+  let s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block;width:100%">';
+  const steps=4;
+  for(let i=0;i<=steps;i++){const v=lo+(hi-lo)*i/steps,yy=Y(v);
+    s+='<line x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'" stroke="#eef0f5"/>';
+    s+='<text x="'+(padL-6)+'" y="'+(yy+3.5)+'" text-anchor="end" font-size="10" fill="#8a94a6">'+fmtChart(v)+'</text>';}
+  if(cfg.type==='line'){
+    cfg.data.forEach((d,i)=>{s+='<text x="'+X(i)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" fill="#8a94a6">'+d.label+'</text>';});
+    if(cfg.ref){const ry=Y(cfg.ref.value);s+='<line x1="'+padL+'" y1="'+ry+'" x2="'+(W-padR)+'" y2="'+ry+'" stroke="#d97706" stroke-dasharray="5,4"/><text x="'+(W-padR)+'" y="'+(ry-5)+'" text-anchor="end" font-size="10" fill="#d97706">'+cfg.ref.label+'</text>';}
+    const pts=cfg.data.map((d,i)=>X(i)+','+Y(d.value)).join(' ');
+    if(cfg.area){s+='<polygon points="'+padL+','+Y(lo)+' '+pts+' '+X(cfg.data.length-1)+','+Y(lo)+'" fill="'+cfg.color+'18" stroke="none"/>';}
+    s+='<polyline points="'+pts+'" fill="none" stroke="'+cfg.color+'" stroke-width="2" stroke-linejoin="round"/>';
+    cfg.data.forEach((d,i)=>{s+='<circle cx="'+X(i)+'" cy="'+Y(d.value)+'" r="3" fill="#fff" stroke="'+cfg.color+'" stroke-width="2"/>';
+      s+='<circle cx="'+X(i)+'" cy="'+Y(d.value)+'" r="10" fill="transparent"><title>'+d.label+'：'+fmtChart(d.value)+(cfg.ySuffix||'')+'</title></circle>';});
+    const last=cfg.data[cfg.data.length-1];
+    s+='<text x="'+X(cfg.data.length-1)+'" y="'+(Y(last.value)-10)+'" text-anchor="middle" font-size="11" font-weight="600" fill="'+cfg.color+'">'+fmtChart(last.value)+(cfg.ySuffix||'')+'</text>';
+  }else{
+    const bw=iw/cfg.data.length*0.52, b0=Y(lo);
+    cfg.data.forEach((d,i)=>{const cx=padL+i/cfg.data.length*iw+iw/cfg.data.length/2;
+      s+='<rect x="'+(cx-bw/2)+'" y="'+Y(d.value)+'" width="'+bw+'" height="'+Math.max(1,b0-Y(d.value))+'" rx="4" fill="'+(d.color||cfg.color)+'"/>';
+      s+='<text x="'+cx+'" y="'+(Y(d.value)-5)+'" text-anchor="middle" font-size="10" font-weight="600">'+fmtChart(d.value)+(cfg.ySuffix||'')+'</text>';
+      s+='<text x="'+cx+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" fill="#8a94a6">'+d.label+'</text>';});
+    if(cfg.ref){const ry=Y(cfg.ref.value);s+='<line x1="'+padL+'" y1="'+ry+'" x2="'+(W-padR)+'" y2="'+ry+'" stroke="#d97706" stroke-dasharray="5,4"/><text x="'+(padL+4)+'" y="'+(ry-5)+'" font-size="10" fill="#d97706">'+cfg.ref.label+'</text>';}
+  }
+  s+='</svg>';
+  el.innerHTML=s;
+}
+const TREND_LABELS=['7月','8月','9月','10月','11月','12月','1月','2月','3月','4月','5月','6月'];
+function renderCostChart(){svgChart('chart-cost',{type:'line',area:true,color:'#2f54eb',ySuffix:'万',data:[{label:'1月',value:96},{label:'2月',value:98},{label:'3月',value:102},{label:'4月',value:108},{label:'5月',value:114},{label:'6月',value:124}]});}
+function renderDistChart(){svgChart('chart-dist',{type:'bar',color:'#38bdf8',ySuffix:'K',ref:{value:50,label:'市场 P50 50K'},data:[{label:'P4',value:46.5},{label:'P5',value:50},{label:'P6',value:76},{label:'M1',value:65}]});}
+function renderTrendChart(){
+  const dir=document.getElementById('bm-direction').value;
+  const city=document.getElementById('bm-city').value;
+  document.getElementById('trend-title').textContent=dir+' · '+city+' · 近 12 个月 P50';
+  const p50=Math.round(DIRECTIONS[dir].p50*CITIES[city]*EXPS[document.getElementById('bm-exp').value]*TYPES[document.getElementById('bm-type').value]);
+  const data=TREND_LABELS.map((lb,i)=>({label:lb,value:Math.round(p50*(0.95+0.028*Math.sin(i*1.1)+0.05*i/11))}));
+  svgChart('chart-trend',{type:'line',color:'#2f54eb',ySuffix:'万',data});
+}
+function renderSensChart(){
+  const N=+document.getElementById('opt-n').value*10000, K=+document.getElementById('opt-k').value;
+  const V0=+document.getElementById('opt-v0').value*1e8/(+document.getElementById('opt-shares').value*10000);
+  const Naft=N*(1-+document.getElementById('opt-dil').value/100);
+  const ma=+document.getElementById('m-acq').value;
+  const p={ipo:+document.getElementById('p-ipo').value/100,acq:+document.getElementById('p-acq').value/100,hold:+document.getElementById('p-hold').value/100,fail:+document.getElementById('p-fail').value/100};
+  const sum=p.ipo+p.acq+p.hold+p.fail;['ipo','acq','hold','fail'].forEach(k=>p[k]/=sum);
+  function sc(mult){const Vex=V0*mult,gross=Math.max(0,(Vex-K)*Naft);
+    let tax=taxMode?0.2*gross:(Math.max(0,(V0-K)*Naft)*bracketTax(Math.max(0,(V0-K)*Naft)/10000)+Math.max(0,(Vex-V0)*Naft)*0.2);
+    return Math.max(0,gross-tax);}
+  const data=[];
+  for(let mi=1;mi<=8;mi+=0.5){data.push({label:(mi%1===0?mi:mi.toFixed(1))+'x',value:Math.round((p.ipo*sc(mi)+p.acq*sc(ma))/10000)});}
+  svgChart('chart-sens',{type:'line',color:'#16a34a',ySuffix:'万',data});
+}
+function renderCharts(){renderCostChart();renderDistChart();renderTrendChart();renderSensChart();}
+window.addEventListener('resize',renderCharts);
+
+/* ── 对标数据 ──
+   v0.2 已按 benchmark-data/benchmark-dataset.json 真实数据校准
+   关键修正：模拟IC 58→50（偏高10-20%）；工艺45→36、设备40→32、封装44→36（明显高估）；
+   趋势按《集成电路行业人才洞察报告2024》分化：工艺/设备↑，模拟/数字前后端/测试/软件↓
+   注意：审批/薪酬单等流程演示页数字为独立演示口径，与对标校准值不构成绑定 */
+const DIRECTIONS = {
+  '模拟IC设计':{p50:50,rarity:1.15,sample:137,trend:'-1.5%'},
+  '数字前端(RTL)':{p50:52,rarity:1.00,sample:210,trend:'-2.0%'},
+  '数字验证':{p50:50,rarity:1.00,sample:240,trend:'-1.8%'},
+  '数字后端':{p50:50,rarity:1.05,sample:120,trend:'-2.5%'},
+  '版图设计':{p50:38,rarity:1.00,sample:150,trend:'-0.5%'},
+  '工艺工程师(光刻)':{p50:36,rarity:1.10,sample:90,trend:'+5.2%'},
+  '工艺整合PIE':{p50:40,rarity:1.10,sample:75,trend:'+4.5%'},
+  '设备工程师':{p50:32,rarity:1.00,sample:110,trend:'+7.5%'},
+  '器件/TCAD':{p50:45,rarity:1.10,sample:60,trend:'+2.0%'},
+  'EDA研发':{p50:50,rarity:1.20,sample:55,trend:'+3.5%'},
+  '芯片测试ATE':{p50:40,rarity:1.00,sample:130,trend:'-1.2%'},
+  '封装(先进封装)':{p50:36,rarity:1.10,sample:85,trend:'+3.0%'},
+  '芯片固件/驱动':{p50:38,rarity:1.00,sample:160,trend:'-2.0%'}
+};
+const CITIES = {上海:1.0,北京:1.06,深圳:1.0,苏州:0.90,无锡:0.86,合肥:0.84,武汉:0.86,成都:0.85,西安:0.82,杭州:0.97,南京:0.95,广州:0.95,厦门:0.90};
+const EXPS = {'1-3年':0.58,'3-5年':1.0,'5-8年':1.36,'8-10年':1.62,'10年以上':1.90};
+const TYPES = {Fabless:1.0,晶圆厂:0.93,IDM:0.90,'设备材料':0.95,封测:0.82,EDA:1.08,初创:0.90};
+const STAGES = {天使轮:0.25,A轮:0.35,B轮:0.45,'C轮+':0.55,已上市:0.10};
+function fillSel(id,obj){const s=document.getElementById(id);s.innerHTML=Object.keys(obj).map(k=>`<option>${k}</option>`).join('');}
+fillSel('bm-direction',DIRECTIONS);fillSel('bm-city',CITIES);fillSel('bm-exp',EXPS);fillSel('bm-type',TYPES);fillSel('bm-stage',STAGES);
+function runBenchmark(){
+  const d=DIRECTIONS[document.getElementById('bm-direction').value];
+  const city=CITIES[document.getElementById('bm-city').value];
+  const exp=EXPS[document.getElementById('bm-exp').value];
+  const type=TYPES[document.getElementById('bm-type').value];
+  const stage=document.getElementById('bm-stage').value;
+  const p50=Math.round(d.p50*city*exp*type);
+  const p25=Math.round(p50*0.78), p75=Math.round(p50*1.28);
+  const total=Math.round(p50*(1+STAGES[stage])*d.rarity);
+  const conf = d.sample>=120?'高':(d.sample>=60?'中':'低');
+  document.getElementById('bm-title').textContent = `${document.getElementById('bm-direction').value} · ${document.getElementById('bm-city').value} · ${document.getElementById('bm-exp').value} · ${document.getElementById('bm-type').value}（${stage}）`;
+  document.getElementById('bm-p25').textContent = p25+'万'; document.getElementById('bm-p50').textContent=p50+'万'; document.getElementById('bm-p75').textContent=p75+'万';
+  document.getElementById('bm-total').textContent = total+'万';
+  document.getElementById('bm-rarity').textContent = d.rarity.toFixed(2);
+  document.getElementById('bm-trend').textContent = d.trend;
+  document.getElementById('bm-sample').textContent = Math.round(d.sample*city);
+  document.getElementById('bm-hidden').textContent = d.sample>100?18:25;
+  document.getElementById('bm-confidence').textContent = '置信度：'+conf;
+  document.getElementById('bm-stage-name').textContent = stage;
+  renderTrendChart(); // 趋势图随查询维度联动
+}
+
+/* ── Copilot ── */
+const KB = [
+  {k:['试用期','社保'],a:'按制度第 3 条：试用期工资 ≥ 转正工资的 80% 且不低于当地最低工资。\n深圳 2025 社保基数下限 ¥6,120/月，个人比例：养老 8%、医疗 2%、失业 0.3%、公积金 5%-12%（公司选定 7%）。\n试用期按实际工资申报缴费。',s:'来源：薪酬制度 v3.2 P3 · 深圳市社保局 2025 缴费基数通知'},
+  {k:['加班'],a:'工作日加班：1.5 倍；休息日加班：2 倍（可调休）；法定节假日：3 倍。\n加班基数 = 基本工资 ÷ 21.75 天。',s:'来源：《劳动法》第 44 条 · 公司加班管理制度 v2.1'},
+  {k:['递延','101号','期权'],a:'非上市公司股权激励符合财税〔2016〕101 号可递延纳税：行权时不征税，转让时按"财产转让所得" 20% 缴纳。\n条件：激励计划备案、期权池设立、员工真实行权、持股平台合规等。',s:'来源：财税〔2016〕101 号 · 政策库 #45'},
+  {k:['补贴','人才'],a:'各地半导体人才政策差异大，常见：落户（上海/深圳/苏州）、购房补贴（无锡 20-50 万）、个税返还（合肥/成都）、一次性安家费。\n建议按员工所在城市检索政策库，可自动生成申报材料。',s:'来源：政策知识库 · 人才补贴类 23 条'},
+  {k:['税','个税'],a:'个税 = 累计预扣法。2025 年专项附加扣除：子女教育 2000/月、住房贷款 1000/月、赡养老人 3000/月（独生子女）等。\n示例：张三（月薪 25K，社保公积金 3950）个税 ≈ 2,310 元。',s:'来源：个人所得税法 · 国家税务总局 2025 年专项附加扣除公告'},
+  {k:['离职','结算'],a:'离职结算：当月工资 + 未休年假折算 + 经济补偿（N：每满一年一个月工资；违法解除 N×2）。\n社保：离职当月由公司缴纳，次月起停缴。',s:'来源：《劳动合同法》第 46-47 条 · 离职结算制度 v1.5'}
+];
+function addMsg(cls,html){const c=document.getElementById('chat');const m=document.createElement('div');m.className='msg '+cls;m.innerHTML=html;c.appendChild(m);c.scrollTop=c.scrollHeight;}
+function ask(q){
+  addMsg('user',q);
+  const hit=KB.find(item=>item.k.every(w=>q.includes(w)));
+  setTimeout(()=>{
+    if(hit){addMsg('ai',hit.a+'\n\n'+hit.s);}
+    else{addMsg('ai','这个问题需要结合具体情况，已转给 HR 人工处理（预计 2 小时内回复）。\n\n提示：可尝试"试用期/社保""加班""期权递延""离职结算"等关键词。');}
+  },450);
+}
+function sendChat(){const inp=document.getElementById('chat-input');const q=inp.value.trim();if(!q)return;inp.value='';ask(q);}
+
+/* ── 期权模拟 ── */
+let taxMode=true; // true=递延20%
+function setTax(delay){taxMode=delay;document.getElementById('tax-delay').className='btn sm '+(delay?'primary':'');document.getElementById('tax-nodelay').className='btn sm '+(delay?'':'primary');document.getElementById('tax-label').textContent='税负模式：'+(delay?'递延（转让时 20%）':'非递延（行权时累进）');calcOption();}
+function bracketTax(w){ // w: 万元, 简化综合所得税率表（无速算扣除，原型演示）
+  if(w<=3.6)return 0.03; if(w<=14.4)return 0.10; if(w<=30)return 0.20; if(w<=42)return 0.25;
+  if(w<=66)return 0.30; if(w<=96)return 0.35; return 0.45;
+}
+function syncSlider(id,vid,suffix){const s=document.getElementById(id);document.getElementById(vid).textContent=s.value+suffix;}
+['p-ipo','p-acq','p-hold','p-fail'].forEach(id=>document.getElementById(id).oninput=()=>{syncSlider(id,id+'-v','%');calcOption();});
+['m-ipo','m-acq'].forEach(id=>document.getElementById(id).oninput=()=>{syncSlider(id,id+'-v','x');calcOption();});
+document.getElementById('opt-lq').oninput=()=>{document.getElementById('lq-val').textContent=document.getElementById('opt-lq').value;calcOption();};
+['opt-n','opt-k','opt-v0','opt-shares','opt-dil','opt-vest'].forEach(id=>document.getElementById(id).onchange=calcOption);
+function calcOption(){
+  const N=+document.getElementById('opt-n').value*10000;
+  const K=+document.getElementById('opt-k').value;
+  const V0yi=+document.getElementById('opt-v0').value;
+  const shares=+document.getElementById('opt-shares').value*10000;
+  const dil=+document.getElementById('opt-dil').value/100;
+  const vest=+document.getElementById('opt-vest').value;
+  const lq=+document.getElementById('opt-lq').value;
+  const V0=V0yi*1e8/shares;
+  const Naft=N*(1-dil);
+  const p={ipo:+document.getElementById('p-ipo').value/100,acq:+document.getElementById('p-acq').value/100,hold:+document.getElementById('p-hold').value/100,fail:+document.getElementById('p-fail').value/100};
+  const sum=p.ipo+p.acq+p.hold+p.fail; ['ipo','acq','hold','fail'].forEach(k=>p[k]/=sum);
+  const mi=+document.getElementById('m-ipo').value, ma=+document.getElementById('m-acq').value;
+  function scenario(mult){
+    const Vex=V0*mult;
+    const gross=Math.max(0,(Vex-K)*Naft);
+    let tax=0;
+    if(taxMode){tax=0.2*gross;}
+    else{const spread=Math.max(0,(V0-K)*Naft);tax=spread*bracketTax(spread/10000)+Math.max(0,(Vex-V0)*Naft)*0.2;}
+    return Math.max(0,gross-tax);
+  }
+  function expected(multI,multA){return p.ipo*scenario(multI)+p.acq*scenario(multA)+p.hold*0+p.fail*0;}
+  const mid=expected(mi,ma);
+  const cons=expected(mi*0.5,ma*0.6);
+  const opt=expected(mi*1.7,ma*1.4);
+  const w=function(v){return Math.round(v/10000);};
+  document.getElementById('r-cons').textContent=w(cons)+'万';
+  document.getElementById('r-mid').textContent=w(mid)+'万';
+  document.getElementById('r-opt').textContent=w(opt)+'万';
+  document.getElementById('r-equiv').textContent='≈ '+w(mid/vest*lq)+' 万/年';
+  const sens=expected(mi*2,ma)-mid;
+  document.getElementById('r-sens').textContent=(mid>0?Math.round(sens/mid*100):0)+'%';
+  renderSensChart(); // 敏感性曲线随参数联动
+}
+/* ── 审批中心（F1/F2/F4/F5 流程演示）── */
+const TYPE_LABEL = {band:'带宽',raise:'调薪',option:'期权',offer:'Offer'};
+const APPROVALS = [
+  {id:'A-101',type:'band',title:'带宽刷新 · 模拟IC设计（上海 3-5年）',who:'HR 李明 · 06-16 10:20',key:'P50 58万 → 62万（+6.9%）',summary:'AI 草稿 · 样本137 · 稀缺性1.15',status:'pending',page:'band-approval'},
+  {id:'A-102',type:'raise',title:'调薪申请 · 王**（模拟IC设计 P5）',who:'CTO 陈** · 06-16 09:40',key:'建议 +12%（58万 → 65万）',summary:'P18 分位 + 绩效 S + 留才预警',status:'pending',page:'raise-approval'},
+  {id:'A-103',type:'option',title:'期权授予 · 李**（EDA 工具 P5）',who:'HR 李明 · 06-15 17:30',key:'授予 0.3% · B轮估值',summary:'等值现金 ≈ 12万/年（4年归属）',status:'pending',page:'option'},
+  {id:'A-104',type:'offer',title:'Offer 建议 · 周*（数字后端 P6）',who:'HR 李明 · 06-15 15:10',key:'总包 95万（现金68+期权27）',summary:'带宽 P72 · HBM 接口稀缺技能',status:'pending',page:'offer-approval'},
+  {id:'A-105',type:'raise',title:'调薪申请 · 郑*（版图设计 P4）',who:'CTO 陈** · 06-14 11:00',key:'+8% · 已通过',summary:'带宽内 · 影响可控',status:'approved',page:'raise-approval'}
+];
+function aprCard(a,btn){
+  return `<div class="apr-item">
+    <div style="flex:1"><div><span class="chip info">${TYPE_LABEL[a.type]}</span> <b>${a.title}</b></div>
+    <div class="hint">${a.who} · ${a.key}</div>
+    <div class="hint">${a.summary}</div></div>
+    ${btn}</div>`;
+}
+function renderApprovals(){
+  const pending = APPROVALS.filter(a=>a.status==='pending');
+  const done = APPROVALS.filter(a=>a.status!=='pending');
+  document.getElementById('pending-count').textContent = pending.length+' 项';
+  document.getElementById('approval-list').innerHTML = pending.length
+    ? pending.map(a=>aprCard(a,`<button class="btn sm primary" onclick="goto('${a.page}')">查看处理</button>`)).join('')
+    : '<div class="hint" style="padding:8px 0">暂无待审批事项 🎉</div>';
+  document.getElementById('approval-done').innerHTML = done.map(a=>aprCard(a,`<span class="chip ${a.status==='approved'?'ok':'bad'}">${a.status==='approved'?'已通过':'已驳回'}</span>`)).join('');
+  const n = pending.length;
+  const b = document.getElementById('nav-badge');
+  b.textContent = n; b.style.display = n ? 'inline' : 'none';
+}
+function finishStep(flow){ // flow: band/raise/offer
+  const s = document.getElementById('stepper-'+flow);
+  if(!s) return;
+  const cur = s.querySelector('.step.current');
+  const next = cur && cur.nextElementSibling;
+  if(cur){cur.classList.remove('current');cur.classList.add('done');}
+  if(next){next.classList.add('current');}
+}
+function reject(flow,id){
+  const a = APPROVALS.find(x=>x.id===id);
+  if(a) a.status = 'rejected';
+  finishStep(flow);
+  renderApprovals();
+  toast('已驳回，将通知发起人补充说明（原型演示）');
+}
+function approveBand(){
+  const v = document.getElementById('band-p50').value;
+  finishStep('band');
+  const a = APPROVALS.find(x=>x.id==='A-101');
+  a.status='approved'; a.key='P50 58万 → '+v+'万 · 已固化';
+  renderApprovals();
+  toast('带宽已固化（P50='+v+'万），后续定薪/调薪自动引用');
+}
+function approveRaise(){
+  const opt = document.getElementById('opt-extra').checked;
+  finishStep('raise');
+  const a = APPROVALS.find(x=>x.id==='A-102');
+  a.status='approved'; a.key='+12% 已通过'+(opt?' · 期权+0.1%':'');
+  renderApprovals();
+  toast('调薪已通过'+(opt?'，含期权加授 0.1%':'')+'（原型演示）');
+}
+function approveOffer(){
+  finishStep('offer');
+  const a = APPROVALS.find(x=>x.id==='A-104');
+  a.status='approved'; a.key='总包 95万 · 已同意发出';
+  renderApprovals();
+  toast('已同意发出 Offer（原型演示）');
+}
+renderApprovals();
+calcOption();
+runBenchmark();
+renderCharts();
+</script>
+</body>
+</html>

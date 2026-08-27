@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+.npm-cache/
+
+# 环境与密钥（真 Key 只允许在 .env，且永不入库）
+.env
+.env.*
+!.env.example
+
+# 数据库（含演示数据，勿入库）
+*.db
+*.db-wal
+*.db-shm
+
+# 系统与编辑器
+.DS_Store
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
+# 本地测试临时文件
+/tmp/
