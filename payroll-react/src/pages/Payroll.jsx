@@ -15,6 +15,7 @@ export default function Payroll({ toast, backendUp }) {
   const [open, setOpen] = useState({})
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [cat, setCat] = useState('all') // 岗位类别筛选
 
   useEffect(() => {
     let alive = true
@@ -30,6 +31,8 @@ export default function Payroll({ toast, backendUp }) {
     return () => { alive = false }
   }, [month, backendUp])
 
+  const visible = rows ? (cat === 'all' ? rows : rows.filter(r => r.category === cat)) : []
+  const CAT_TABS = [['all', '全部'], ['tech', '技术'], ['support', '职能'], ['mgmt', '管理']]
   const toggle = i => setOpen(o => ({ ...o, [i]: !o[i] }))
   const download = async type => {
     const names = { tax: '个税扣缴申报', social: '社保公积金申报', bank: '银行代发' }
@@ -66,33 +69,39 @@ export default function Payroll({ toast, backendUp }) {
         <Btn sm onClick={() => download('bank')}>导出银行代发</Btn>
         <Btn primary disabled={submitted} onClick={submit}>{submitted ? '已提交 · 待财务复核' : '提交财务复核'}</Btn>
       </div>
+      <div className="chip-row" style={{ marginBottom: 10 }}>
+        {CAT_TABS.map(([k, label]) => (
+          <button key={k} className={`btn sm ${cat === k ? 'primary' : ''}`} onClick={() => setCat(k)}>{label}{k !== 'all' ? `（${rows?.filter(r => r.category === k).length || 0}）` : ''}</button>
+        ))}
+      </div>
       <Card>
         <table>
-          <tr><th>员工</th><th>基本</th><th>绩效</th><th>加班</th><th>社保/公积金</th><th>个税</th><th>实发</th><th>差异标记</th></tr>
-          {rows?.map((row, i) => (
+          <tr><th>员工</th><th>类别</th><th>基本</th><th>绩效</th><th>加班</th><th>社保/公积金</th><th>个税</th><th>实发</th><th>差异标记</th></tr>
+          {visible.map((row, i) => (
             <FragmentRow key={row.name} row={row} open={open[i]} toggle={() => toggle(i)} />
           ))}
-          {rows && (
-            <tr className="total-row"><td>合计（{rows.length} 人）</td><td colSpan={5}></td><td></td><td><b>{total?.toLocaleString('zh-CN')}</b></td><td><Chip kind="ok">个税倒推 ✓</Chip></td></tr>
-          )}
+          {visible.length ? (
+            <tr className="total-row"><td>合计（{visible.length} 人）</td><td colSpan={5}></td><td></td><td><b>{(visible.reduce((s, r) => s + (parseInt(String(r.net).replace(/,/g, '')) || 0), 0)).toLocaleString('zh-CN')}</b></td><td><Chip kind="ok">个税倒推 ✓</Chip></td></tr>
+          ) : <tr><td colSpan={9}><Hint>该类别本月无员工</Hint></td></tr>}
         </table>
-        <Hint style={{ marginTop: 10 }}>校验项：最低工资 ✓ · 个税倒推 ✓ · 加班费存疑（{rows?.filter(r => r.flag?.text.includes('加班费存疑')).length || 0} 项）——由后端规则引擎生成，金额按员工档案实时计算</Hint>
+        <Hint style={{ marginTop: 10 }}>校验项：最低工资 ✓ · 个税倒推 ✓ · 加班费存疑（{visible.filter(r => r.flags?.some?.(f => f.text.includes('加班费存疑'))).length || 0} 项）——规则引擎生成，金额按员工档案实时计算</Hint>
       </Card>
     </>
   )
 }
 
 function FragmentRow({ row, open, toggle }) {
-  const flag = row.flag
+  const flag = row.flags?.[0] || row.flag || null
   return (
     <>
       <tr>
         <td>{row.name} <Chip kind="gray">{row.grade}</Chip>{row.status === 'departed' && <Chip kind="warn">离职</Chip>}</td>
+        <td>{row.category === 'tech' ? '技术' : row.category === 'support' ? '职能' : row.category === 'mgmt' ? '管理' : '—'}</td>
         <td>{row.base}</td><td>{row.perf}</td><td>{row.ot}</td><td>{row.sf}</td><td>{row.tax}</td><td><b>{row.net}</b></td>
         <td>{flag ? <span className={`chip ${flag.kind}`} style={flag.detail ? { cursor: 'pointer' } : undefined} onClick={flag.detail ? toggle : undefined}>{flag.text}</span> : <span className="hint">—</span>}</td>
       </tr>
       {flag?.detail && open && (
-        <tr style={{ background: '#fafbfe' }}><td colSpan="8"><Hint>{flag.detail}</Hint></td></tr>
+        <tr style={{ background: '#fafbfe' }}><td colSpan="9"><Hint>{flag.detail}</Hint></td></tr>
       )}
     </>
   )

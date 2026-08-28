@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS sessions(
 );
 CREATE TABLE IF NOT EXISTS employees(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, grade TEXT, job_family TEXT, city TEXT,
-  status TEXT DEFAULT 'active', monthly_base INTEGER, perf_ratio REAL DEFAULT 0.32,
+  category TEXT DEFAULT 'tech', status TEXT DEFAULT 'active', monthly_base INTEGER, perf_ratio REAL DEFAULT 0.32,
   ot_amount INTEGER DEFAULT 0, flag TEXT, hire_month TEXT DEFAULT '2025-01',
   leave_month TEXT, special_deduction INTEGER DEFAULT 0
 );
@@ -85,17 +85,28 @@ const USERS = [
 ]
 
 // hire_month 用于成本趋势的真实增长；leave_month 为离职结算月
+// category: tech=技术岗（工程师）/ support=职能岗（HR/财务/行政等）/ mgmt=管理岗（M1+）
 const EMPLOYEES = [
-  { name: '张三', grade: 'P5', job_family: '模拟IC设计', city: '上海', monthly_base: 25000, perf_ratio: 0.32, ot_amount: 0, flag: '社保基数调整', hire_month: '2025-01', special_deduction: 3000 },
-  { name: '李四', grade: 'P4', job_family: '数字前端(RTL)', city: '上海', monthly_base: 18000, perf_ratio: 0.30, ot_amount: 4200, flag: '转正生效', hire_month: '2025-01' },
-  { name: '王五', grade: 'P6', job_family: '模拟IC设计', city: '上海', monthly_base: 45000, perf_ratio: 0.30, ot_amount: 0, status: 'departed', leave_month: '2025-06', hire_month: '2025-01', flag: '离职结算' },
-  { name: '赵六', grade: 'P4', job_family: '数字后端', city: '深圳', monthly_base: 19000, perf_ratio: 0.30, ot_amount: 3200, flag: '加班费存疑', hire_month: '2025-01' },
-  { name: '王**', grade: 'P5', job_family: '模拟IC设计', city: '上海', monthly_base: 48333, perf_ratio: 0.30, ot_amount: 0, flag: '留才预警', hire_month: '2025-02' },
-  { name: '李**', grade: 'P5', job_family: 'EDA研发', city: '上海', monthly_base: 45000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-02' },
-  { name: '郑*', grade: 'P4', job_family: '版图设计', city: '上海', monthly_base: 30000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-03' },
-  { name: '陈七', grade: 'P4', job_family: '数字验证', city: '苏州', monthly_base: 22000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-03' },
-  { name: '吴八', grade: 'P5', job_family: '工艺工程师(光刻)', city: '无锡', monthly_base: 26000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-04' },
-  { name: '林九', grade: 'P4', job_family: '芯片测试ATE', city: '合肥', monthly_base: 21000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-05' }
+  // ── 技术岗 ──
+  { name: '张三', grade: 'P5', job_family: '模拟IC设计', city: '上海', category: 'tech', monthly_base: 25000, perf_ratio: 0.32, ot_amount: 0, flag: '社保基数调整', hire_month: '2025-01', special_deduction: 3000 },
+  { name: '李四', grade: 'P4', job_family: '数字前端(RTL)', city: '上海', category: 'tech', monthly_base: 18000, perf_ratio: 0.30, ot_amount: 4200, flag: '转正生效', hire_month: '2025-01' },
+  { name: '王五', grade: 'P6', job_family: '模拟IC设计', city: '上海', category: 'tech', monthly_base: 45000, perf_ratio: 0.30, ot_amount: 0, status: 'departed', leave_month: '2025-06', hire_month: '2025-01', flag: '离职结算' },
+  { name: '赵六', grade: 'P4', job_family: '数字后端', city: '深圳', category: 'tech', monthly_base: 19000, perf_ratio: 0.30, ot_amount: 3200, flag: '加班费存疑', hire_month: '2025-01' },
+  { name: '王**', grade: 'P5', job_family: '模拟IC设计', city: '上海', category: 'tech', monthly_base: 48333, perf_ratio: 0.30, ot_amount: 0, flag: '留才预警', hire_month: '2025-02' },
+  { name: '李**', grade: 'P5', job_family: 'EDA研发', city: '上海', category: 'tech', monthly_base: 45000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-02' },
+  { name: '郑*', grade: 'P4', job_family: '版图设计', city: '上海', category: 'tech', monthly_base: 30000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-03' },
+  { name: '陈七', grade: 'P4', job_family: '数字验证', city: '苏州', category: 'tech', monthly_base: 22000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-03', leave_month: '2025-08' }, // 计划离职（待离职）
+  { name: '吴八', grade: 'P5', job_family: '工艺工程师(光刻)', city: '无锡', category: 'tech', monthly_base: 26000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-04' },
+  { name: '林九', grade: 'P4', job_family: '芯片测试ATE', city: '合肥', category: 'tech', monthly_base: 21000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-05' },
+  // ── 职能岗 ──
+  { name: '孙财务', grade: 'P4', job_family: '财务', city: '上海', category: 'support', monthly_base: 16000, perf_ratio: 0.25, ot_amount: 0, hire_month: '2025-01' },
+  { name: '周HR', grade: 'P4', job_family: '人力资源', city: '上海', category: 'support', monthly_base: 14000, perf_ratio: 0.25, ot_amount: 0, hire_month: '2025-02' },
+  { name: '吴行政', grade: 'P4', job_family: '行政', city: '上海', category: 'support', monthly_base: 12000, perf_ratio: 0.20, ot_amount: 0, hire_month: '2025-03' },
+  // ── 管理岗 ──
+  { name: '钱经理', grade: 'M1', job_family: '工程管理', city: '上海', category: 'mgmt', monthly_base: 55000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-01' },
+  // ── 招聘管线（发offer未入职 / 待入职）──
+  { name: '周OFFER1', grade: 'P5', job_family: '数字后端', city: '上海', category: 'tech', status: 'offer', monthly_base: 40000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-07' },
+  { name: '周OFFER2', grade: 'P4', job_family: '芯片测试ATE', city: '合肥', category: 'tech', status: 'offer', monthly_base: 22000, perf_ratio: 0.30, ot_amount: 0, hire_month: '2025-08' }
 ]
 
 const APPROVALS = [
@@ -122,8 +133,8 @@ export function seedIfEmpty() {
   if (u.c === 0) {
     const insU = db.prepare('INSERT INTO users(username,password_hash,role,name) VALUES(?,?,?,?)')
     USERS.forEach(u => insU.run(u.username, hashPassword(u.password), u.role, u.name))
-    const insE = db.prepare('INSERT INTO employees(name,grade,job_family,city,status,monthly_base,perf_ratio,ot_amount,flag,hire_month,leave_month,special_deduction) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-    EMPLOYEES.forEach(e => insE.run(e.name, e.grade, e.job_family, e.city, e.status || 'active', e.monthly_base, e.perf_ratio, e.ot_amount, e.flag || null, e.hire_month || '2025-01', e.leave_month || null, e.special_deduction || 0))
+    const insE = db.prepare('INSERT INTO employees(name,grade,job_family,city,category,status,monthly_base,perf_ratio,ot_amount,flag,hire_month,leave_month,special_deduction) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    EMPLOYEES.forEach(e => insE.run(e.name, e.grade, e.job_family, e.city, e.category || 'tech', e.status || 'active', e.monthly_base, e.perf_ratio, e.ot_amount, e.flag || null, e.hire_month || '2025-01', e.leave_month || null, e.special_deduction || 0))
     const insA = db.prepare('INSERT INTO approvals(id,type,title,who,key,summary,status,page) VALUES(?,?,?,?,?,?,?,?)')
     APPROVALS.forEach(a => insA.run(a.id, a.type, a.title, a.who, a.key, a.summary, a.status || 'pending', a.page))
   }

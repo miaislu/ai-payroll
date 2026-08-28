@@ -106,12 +106,14 @@ app.get('/api/payroll/:period', auth(), (req, res) => {
     const emps = db.prepare('SELECT * FROM employees').all()
     rows = computeMonthFallback(period, emps).map(r => ({
       period: r.period, employee_id: r.employee_id, name: r.name, grade: r.grade, status: r.status,
-      base: r.base, perf: r.perf, ot: r.ot, social: r.social, fund: r.fund, tax: r.tax, net: r.net, flags: JSON.stringify(r.flags)
+      base: r.base, perf: r.perf, ot: r.ot, social: r.social, fund: r.fund, tax: r.tax, net: r.net, flags: JSON.stringify(r.flags), category: r.category
     }))
     fallback = true
   }
+  const cats = db.prepare('SELECT id, category FROM employees').all()
+  const catMap = Object.fromEntries(cats.map(c => [c.id, c.category]))
   const list = rows.map(r => ({
-    name: r.name, grade: r.grade, status: r.status,
+    name: r.name, grade: r.grade, status: r.status, category: r.category || catMap[r.employee_id] || 'tech',
     base: r.status === 'departed' ? '离职结算' : r.base.toLocaleString('zh-CN'),
     perf: r.perf ? r.perf.toLocaleString('zh-CN') : '', ot: r.ot ? r.ot.toLocaleString('zh-CN') : '',
     sf: (-(r.social + r.fund)).toLocaleString('zh-CN'), tax: (-r.tax).toLocaleString('zh-CN'),
@@ -190,9 +192,15 @@ app.get('/api/dashboard/summary', auth(), (req, res) => {
   }
   const headcount = emps.length
   const wan = v => Math.round(v / 100 / 10 * 10) / 10
+  // 人事指标（创始人视角）：员工总数 / 待入职 / 待离职 / 发offer
+  const offers = db.prepare("SELECT COUNT(*) c FROM employees WHERE status='offer'").get().c
+  const pendingHires = db.prepare("SELECT COUNT(*) c FROM employees WHERE hire_month>? AND status!='departed'").get(period).c
+  const pendingLeavers = db.prepare("SELECT COUNT(*) c FROM employees WHERE status='active' AND leave_month>?").get(period).c
+  const byCategory = db.prepare("SELECT category, COUNT(*) c FROM employees WHERE status='active' GROUP BY category").all()
   res.json({
     period, total: cur, prev: before, mom,
     headcount, penetration: headcount ? Math.round(over / headcount * 1000) / 10 : 0,
+    people: { headcount, pendingHires, pendingLeavers, offers, byCategory },
     attribution: {
       newHire: wan(newHire), severance: wan(severance), socialAdj: wan(socialAdj), other: wan(other),
       deltaWan: wan(cur - before)
@@ -205,7 +213,8 @@ app.get('/api/dashboard/trend', auth(), (req, res) => {
   res.json(list.reverse().map(r => ({ period: r.period, label: r.period.slice(5).replace('-', '月') + '月', value: Math.round(r.total / 10000 * 10) / 10, count: r.c })))
 })
 app.get('/api/dashboard/distribution', auth(), (req, res) => {
-  const emps = db.prepare("SELECT * FROM employees WHERE status='active'").all()
+  const category = req.query.category || 'all'
+  const emps = db.prepare("SELECT * FROM employees WHERE status='active'" + (category !== 'all' ? ' AND category=?' : '')).all(...(category !== 'all' ? [category] : []))
   const byGrade = {}
   for (const e of emps) {
     byGrade[e.grade] = byGrade[e.grade] || { sum: 0, n: 0 }
@@ -214,7 +223,7 @@ app.get('/api/dashboard/distribution', auth(), (req, res) => {
   }
   const data = Object.entries(byGrade).sort().map(([g, v]) => ({ label: g, value: Math.round(v.sum / v.n / 1000 * 10) / 10 }))
   const ref = bandOf('模拟IC设计')
-  res.json({ data, refP50: ref ? ref.p50 : null })
+  res.json({ data, refP50: ref ? ref.p50 : null, category, count: emps.length })
 })
 app.get('/api/dashboard/attrition', auth(), (req, res) => {
   const emps = db.prepare("SELECT * FROM employees WHERE status='active'").all()

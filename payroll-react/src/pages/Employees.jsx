@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
-import { CITIES, EXPS } from '../data.js'
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../api.js'
-import { DIRECTIONS } from '../data.js'
+import { DIRECTIONS, CITIES } from '../data.js'
 
 const GRADES = ['P4', 'P5', 'P6', 'M1']
+const SUPPORT_FAMILIES = ['财务', '人力资源', '行政', '市场', '法务', '采购', '质量体系']
+const MGMT_FAMILIES = ['工程管理', '研发管理', '职能管理']
+const JOB_FAMILIES = [...Object.keys(DIRECTIONS), ...SUPPORT_FAMILIES, ...MGMT_FAMILIES]
+const CAT_LABEL = { tech: '技术', support: '职能', mgmt: '管理' }
 const EMPTY = { name: '', grade: 'P4', job_family: '模拟IC设计', city: '上海', monthly_base: 20000, perf_ratio: 0.3, special_deduction: 0, hire_month: '2025-06' }
 
 export default function Employees({ toast, backendUp }) {
@@ -47,20 +50,21 @@ export default function Employees({ toast, backendUp }) {
           <Btn primary onClick={() => open('new')}>+ 新增员工</Btn>
         </div>
         <table>
-          <tr><th>姓名</th><th>职级</th><th>岗位方向</th><th>城市</th><th>月薪</th><th>绩效比例</th><th>专项附加</th><th>入职月</th><th>状态</th><th>操作</th></tr>
+          <tr><th>姓名</th><th>类别</th><th>职级</th><th>岗位</th><th>城市</th><th>月薪</th><th>入职月</th><th>状态</th><th>操作</th></tr>
           {list?.map(e => (
             <tr key={e.id}>
-              <td><b>{e.name}</b></td><td>{e.grade}</td><td>{e.job_family}</td><td>{e.city}</td>
-              <td>¥{e.monthly_base.toLocaleString('zh-CN')}</td><td>{Math.round(e.perf_ratio * 100)}%</td>
-              <td>{e.special_deduction || 0}</td><td>{e.hire_month}</td>
-              <td>{e.status === 'departed' ? <Chip kind="warn">离职</Chip> : <Chip kind="ok">在职</Chip>}</td>
+              <td><b>{e.name}</b></td>
+              <td><Chip kind={e.category === 'tech' ? 'info' : e.category === 'support' ? 'gray' : 'warn'}>{CAT_LABEL[e.category] || '技术'}</Chip></td>
+              <td>{e.grade}</td><td>{e.job_family}</td><td>{e.city}</td>
+              <td>¥{e.monthly_base.toLocaleString('zh-CN')}</td><td>{e.hire_month}</td>
+              <td>{e.status === 'departed' ? <Chip kind="warn">离职</Chip> : e.status === 'offer' ? <Chip kind="info">发offer</Chip> : <Chip kind="ok">在职</Chip>}</td>
               <td style={{ display: 'flex', gap: 6 }}>
                 <Btn sm onClick={() => open(e)}>编辑</Btn>
                 <Btn sm onClick={() => setConfirmDel(e)}>删除</Btn>
               </td>
             </tr>
           ))}
-          {list && !list.length && <tr><td colSpan={10}><Hint>暂无员工（后端不可用或数据为空）</Hint></td></tr>}
+          {list && !list.length && <tr><td colSpan={9}><Hint>暂无员工（后端不可用或数据为空）</Hint></td></tr>}
         </table>
       </Card>
 
@@ -71,7 +75,11 @@ export default function Employees({ toast, backendUp }) {
             <div className="grid g2">
               <Field label="姓名"><input value={form.name} onChange={set('name')} placeholder="必填" /></Field>
               <Field label="职级"><select value={form.grade} onChange={set('grade')}>{GRADES.map(g => <option key={g}>{g}</option>)}</select></Field>
-              <Field label="岗位方向"><select value={form.job_family} onChange={set('job_family')}>{Object.keys(DIRECTIONS).map(k => <option key={k}>{k}</option>)}</select></Field>
+              <Field label="岗位（技术/职能/管理）"><select value={form.job_family} onChange={set('job_family')}>
+                {Object.keys(DIRECTIONS).map(k => <option key={k}>{k}</option>)}
+                <optgroup label="职能岗">{SUPPORT_FAMILIES.map(k => <option key={k}>{k}</option>)}</optgroup>
+                <optgroup label="管理岗">{MGMT_FAMILIES.map(k => <option key={k}>{k}</option>)}</optgroup>
+              </select></Field>
               <Field label="城市"><select value={form.city} onChange={set('city')}>{Object.keys(CITIES).map(k => <option key={k}>{k}</option>)}</select></Field>
               <Field label="月薪（元）"><input type="number" value={form.monthly_base} onChange={set('monthly_base')} min={2000} /></Field>
               <Field label="绩效比例（0-1）"><input type="number" step="0.01" value={form.perf_ratio} onChange={set('perf_ratio')} /></Field>
