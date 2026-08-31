@@ -5,16 +5,31 @@ import Dashboard from './pages/Dashboard.jsx'
 import Benchmark from './pages/Benchmark.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Employees from './pages/Employees.jsx'
+import EmployeeProfile from './pages/EmployeeProfile.jsx'
 import Copilot from './pages/Copilot.jsx'
 import Option from './pages/Option.jsx'
+import Equity from './pages/Equity.jsx'
 import Payslip from './pages/Payslip.jsx'
 import Settings from './pages/Settings.jsx'
 import { ApprovalsPage, BandApprovalPage, RaiseApprovalPage, OfferApprovalPage } from './pages/Approvals.jsx'
+// v2 页面
+import Recruiting from './pages/Recruiting.jsx'
+import Candidates from './pages/Candidates.jsx'
+import Requisitions from './pages/Requisitions.jsx'
+import Interviews from './pages/Interviews.jsx'
+import Channels from './pages/Channels.jsx'
+import Org from './pages/Org.jsx'
+import CostDashboard from './pages/CostDashboard.jsx'
+import Budget from './pages/Budget.jsx'
+import Forecast from './pages/Forecast.jsx'
 
 const PAGES_COMP = {
   dashboard: Dashboard, benchmark: Benchmark, payroll: Payroll, employees: Employees, copilot: Copilot,
   option: Option, payslip: Payslip, settings: Settings, approvals: ApprovalsPage,
-  'band-approval': BandApprovalPage, 'raise-approval': RaiseApprovalPage, 'offer-approval': OfferApprovalPage
+  'band-approval': BandApprovalPage, 'raise-approval': RaiseApprovalPage, 'offer-approval': OfferApprovalPage,
+  recruiting: Recruiting, candidates: Candidates, requisitions: Requisitions, interviews: Interviews,
+  channels: Channels, org: Org, cost: CostDashboard, budget: Budget, forecast: Forecast,
+  'employee-profile': EmployeeProfile, equity: Equity
 }
 const DEMO_ACCOUNTS = [
   { username: 'founder', password: 'admin123', label: '创始人' },
@@ -48,7 +63,7 @@ function LoginScreen({ onLogin, toast }) {
             <button key={a.username} className="btn sm" style={{ flex: 1 }} onClick={() => onLogin(a.username, a.password)}>{a.label}</button>
           ))}
         </div>
-        <div className="hint" style={{ marginTop: 12 }}>账号/密码：founder/admin123 · hr/hr123 · emp/emp123<br />生产环境请修改种子密码并启用 HTTPS</div>
+        <div className="hint" style={{ marginTop: 12 }}>演示账号（点击下方一键登录）：创始人 / HR / 员工<br />生产环境请修改种子密码、启用 HTTPS 并配置登录限速</div>
       </div>
     </div>
   )
@@ -56,6 +71,7 @@ function LoginScreen({ onLogin, toast }) {
 
 export default function App() {
   const [page, setPage] = useState('dashboard')
+  const [empId, setEmpId] = useState(null)
   const [user, setUser] = useState(null)
   const [approvals, setApprovals] = useState(INITIAL_APPROVALS)
   const [toast, setToast] = useState(null)
@@ -89,9 +105,10 @@ export default function App() {
 
   const role = user.role
   const goto = p => { const views = ROLE_VIEWS[role]; setPage(views.includes(p) ? p : views[0]); window.scrollTo({ top: 0 }) }
-  const act = async (id, status, newKey) => {
+  const openProfile = id => { setEmpId(id); setPage('employee-profile'); window.scrollTo({ top: 0 }) }
+  const act = async (id, status, newKey, comment) => {
     if (backendUp) {
-      try { await approvalAction(id, status === 'approved' ? 'approve' : 'reject', newKey); setApprovals(await getApprovals()); return } catch { /* 落本地 */ }
+      try { await approvalAction(id, status === 'approved' ? 'approve' : 'reject', newKey, comment); setApprovals(await getApprovals()); return } catch { /* 落本地 */ }
     }
     setApprovals(list => list.map(a => (a.id === id ? { ...a, status, key: newKey || a.key } : a)))
   }
@@ -105,7 +122,9 @@ export default function App() {
     <div id="app">
       <aside id="sidebar">
         <div className="logo"><span className="dot">薪</span>AI 薪酬 · 半导体</div>
-        {NAV.map((item, i) => item.sep ? <div className="nav-sep" key={i}>员工与治理</div> : views.includes(item.page) && (
+        {NAV.map((item, i) => item.group ? (
+          <div className="nav-sep" key={i}>{item.group}</div>
+        ) : views.includes(item.page) && (
           <div key={item.page} className={`nav-item ${hl === item.page ? 'active' : ''}`} onClick={() => goto(item.page)}>
             <span className="ico">{item.ico}</span>{item.label}
             {item.badge && <span className="badge" style={{ display: pending ? 'inline' : 'none' }}>{pending}</span>}
@@ -127,7 +146,7 @@ export default function App() {
           </div>
         </div>
         <div className="page active">
-          <ActivePage goto={goto} toast={showToast} approvals={approvals} act={act} backendUp={backendUp} user={user} />
+          <ActivePage goto={goto} toast={showToast} approvals={approvals} act={act} backendUp={backendUp} user={user} empId={empId} openProfile={openProfile} />
         </div>
       </main>
 

@@ -105,7 +105,32 @@ export default function Dashboard({ goto, backendUp, user }) {
         </div>
       )}
 
-      <Card title={<>薪酬成本趋势（近 {trend.length} 个月）<Chip kind={backendUp ? 'ok' : 'gray'}>{backendUp ? '真实数据' : '演示回退'}</Chip></>}>
+      <Card title="⭐ 重点模块快捷入口" style={{ marginTop: 14 }}>
+        <div className="grid g4">
+          <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #2f54eb' }} onClick={() => goto('recruiting')}>
+            <div className="label">🎯 招聘管理</div>
+            <div className="num" style={{ fontSize: 18 }}>漏斗 · 周期 · 成本</div>
+            <div className="sub">候选人管线 / 需求 / 面试 / 渠道</div>
+          </div>
+          <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #dc2626' }} onClick={() => goto('cost')}>
+            <div className="label">💰 薪酬成本</div>
+            <div className="num" style={{ fontSize: 18 }}>公司口径 · 部门×类别</div>
+            <div className="sub">成本总览 / 预算对比 / 预测</div>
+          </div>
+          <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #7c3aed' }} onClick={() => goto('candidates')}>
+            <div className="label">📋 候选人管线</div>
+            <div className="num" style={{ fontSize: 18 }}>{people.pendingHires + (people.offers || 0)} 人在流程</div>
+            <div className="sub">待入职 {people.pendingHires} · 发 offer {people.offers}</div>
+          </div>
+          <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #10b981' }} onClick={() => goto('org')}>
+            <div className="label">🏢 组织与编制</div>
+            <div className="num" style={{ fontSize: 18 }}>{people.headcount} 人在职</div>
+            <div className="sub">部门树 · 编制 vs 实际</div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title={<>薪酬成本趋势（近 {trend.length} 个月）<Chip kind={backendUp ? 'ok' : 'gray'}>{backendUp ? '真实数据' : '演示回退'}</Chip></>} style={{ marginTop: 14 }}>
         <Chart type="line" area data={trendData} color="#2f54eb" ySuffix="万" />
         <Hint style={{ marginTop: 6 }}>{trend[0]?.label} {trend[0]?.value}万（{trend[0]?.count}人）→ {trend[trend.length - 1]?.label} {trend[trend.length - 1]?.value}万（{trend[trend.length - 1]?.count}人）</Hint>
       </Card>

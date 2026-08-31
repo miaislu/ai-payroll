@@ -101,11 +101,51 @@ export function RaiseApprovalPage({ act, toast }) {
   )
 }
 
-// ── F2 Offer 审批 ──
-export function OfferApprovalPage({ act, toast }) {
+// ── F2 Offer 审批（真实数据优先，无真实审批时回退演示）──
+export function OfferApprovalPage({ approvals, act, toast }) {
   const [step, setStep] = useState(2)
-  const approve = () => { setStep(3); act('A-104', 'approved', '总包 95万 · 已同意发出'); toast('已同意发出 Offer（原型演示）') }
-  const reject = () => { setStep(3); act('A-104', 'rejected'); toast('已驳回（原型演示）') }
+  const real = approvals?.find(a => a.type === 'offer' && a.ref && a.status === 'pending')
+    || approvals?.find(a => a.type === 'offer' && a.ref && a.ref_type === 'candidate')
+  // 真实 Offer 审批
+  if (real) {
+    const c = real.ref
+    const approve = () => {
+      const comment = prompt('审批意见（可选）：', '带宽内，同意') || ''
+      act(real.id, 'approved', real.key, comment)
+      toast('已同意 Offer，候选人状态已更新')
+    }
+    const reject = () => {
+      const comment = prompt('驳回理由：') || ''
+      act(real.id, 'rejected', undefined, comment)
+      toast('已驳回')
+    }
+    return (
+      <>
+        <Card><Stepper steps={['① 招聘需求', '② AI 对标建议', '③ 创始人审批', '④ 发出 Offer']} current={real.status === 'pending' ? 2 : 3} /></Card>
+        <Card title={<>{real.title} <Chip kind="info">{real.id}</Chip></>}>
+          <div className="grid g3" style={{ marginBottom: 10 }}>
+            <div className="card kpi" style={{ margin: 0 }}><div className="label">候选人</div><div className="num" style={{ fontSize: 20 }}>{c.name}</div><div className="sub flat">{real.summary}</div></div>
+            <div className="card kpi" style={{ margin: 0 }}><div className="label">Offer 现金</div><div className="num" style={{ fontSize: 20, color: '#d97706' }}>¥{c.offer_amount?.toLocaleString('zh-CN')}/月</div><div className="sub flat">申请：{real.key}</div></div>
+            <div className="card kpi" style={{ margin: 0 }}><div className="label">审批状态</div><div className="num" style={{ fontSize: 18, color: real.status === 'approved' ? 'var(--ok)' : real.status === 'rejected' ? '#dc2626' : '#f59e0b' }}>{real.status === 'approved' ? '✅ 已通过' : real.status === 'rejected' ? '⛔ 已驳回' : '待审批'}</div><div className="sub flat">发起人：{real.who}</div></div>
+          </div>
+          {real.status !== 'pending' && (
+            <Hint style={{ marginBottom: 10 }}>审批人：{real.action_by || '—'} · {real.action_at || ''}{real.comment ? ` · 意见：${real.comment}` : ''}</Hint>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            {real.status === 'pending' ? (
+              <>
+                <Btn primary onClick={demoApprove}>同意发出 Offer</Btn>
+                <Btn onClick={reject}>驳回（附理由）</Btn>
+              </>
+            ) : <Btn onClick={() => toast('该审批已处理完毕')}>返回</Btn>}
+          </div>
+        </Card>
+      </>
+    )
+  }
+  // 演示回退
+  const demoApprove = () => { setStep(3); act('A-104', 'approved', '总包 95万 · 已同意发出'); toast('已同意发出 Offer（原型演示）') }
+  const demoReject = () => { setStep(3); act('A-104', 'rejected'); toast('已驳回（原型演示）') }
   return (
     <>
       <Card><Stepper steps={['① 招聘需求', '② AI 对标建议', '③ 创始人审批', '④ 发出 Offer']} current={step} /></Card>
@@ -121,9 +161,9 @@ export function OfferApprovalPage({ act, toast }) {
           <Hint style={{ marginTop: 5 }}>HBM 接口方向招聘周期 3-4 个月，建议现金压至 P70（66万）以留调薪空间，期权维持 0.4%。若候选人坚持 95 万总包，可接受（带宽 P75 内）。</Hint>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          <Btn primary onClick={approve}>同意发出 Offer</Btn>
+          <Btn primary onClick={demoApprove}>同意发出 Offer</Btn>
           <Btn onClick={() => toast('已保存调整：现金 66万 / 期权 0.4%，等待 HR 重新生成（原型演示）')}>调整总包</Btn>
-          <Btn onClick={reject}>驳回</Btn>
+          <Btn onClick={demoReject}>驳回</Btn>
         </div>
       </Card>
     </>

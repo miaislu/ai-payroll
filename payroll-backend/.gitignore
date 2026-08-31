@@ -3,3 +3,4 @@ node_modules/
 payroll.db
 payroll.db-wal
 payroll.db-shm
+uploads

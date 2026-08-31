@@ -33,12 +33,13 @@ function cityBase(city, base) {
   return { base: b, capped: b !== base }
 }
 
-// 个人社保公积金（基于封顶后的缴费基数）
-export function socialFund(base, city = '上海') {
+// 个人社保公积金（基于封顶后的缴费基数）；含补充公积金（个人缴纳部分）
+export function socialFund(base, city = '上海', supplementalRate = 0) {
   const { base: cb } = cityBase(city, base)
   const social = Math.round(cb * 0.103) // 养老8% 医疗2% 失业0.3%
-  const fund = Math.round(cb * 0.07)    // 公积金 7%
-  return { social, fund, base: cb }
+  const fund = Math.round(cb * 0.07)    // 基本公积金 7%
+  const supplemental_fund = Math.round(cb * (supplementalRate || 0)) // 补充公积金（个人，比例可配）
+  return { social, fund, supplemental_fund, base: cb }
 }
 
 // 离职经济补偿：当地上年社平工资 3 倍以内免税，超出部分按年度税率表单独计税
@@ -49,32 +50,56 @@ export function severanceTax(severance, city = '上海') {
   return taxAnnual(excess)
 }
 
-// 员工在某月的基本要素（不含累计税）
+// 劳务报酬预扣（顾问/实习生统一口径）：减 20%（>4000）或 800（≤4000）后 ×20% 预扣率
+// 注：统一 20% 预扣，不做三级超额累进；年度汇算补退税由个人自行办理
+export function consultantTax(amount) {
+  if (amount <= 0) return 0
+  const taxable = amount > 4000 ? amount * 0.8 : Math.max(0, amount - 800)
+  return Math.round(taxable * 0.20)
+}
+
+// 员工在某月的基本要素（不含累计税；顾问/实习生按各自口径）
 function monthlyParts(e, period) {
+  const type = e.employment_type || 'employee'
   const base = e.monthly_base
   if (e.status === 'departed') {
     const severance = Math.round(base * 2 + base * 5 / 21.75) // 当月工资 + N+1 + 年假折算
-    const { social, fund } = socialFund(base, e.city)
+    const { social, fund, supplemental_fund } = socialFund(base, e.city, e.supplemental_fund_rate)
     const tax = severanceTax(severance, e.city)
-    const net = severance - social - fund - tax
+    const net = severance - social - fund - supplemental_fund - tax
     return {
       employee_id: e.id, name: e.name, grade: e.grade, status: 'departed', period, city: e.city,
-      base, perf: 0, ot: 0, social, fund, tax, net,
+      base, perf: 0, ot: 0, social, fund, supplemental_fund, tax, net, employment_type: type,
       flags: [{ kind: 'warn', text: '离职结算', detail: `按 N+1 结算（当月工资 ${base.toLocaleString('zh-CN')} + 补偿 + 年假折算），补偿金 3 倍社平内免税，个税已按此口径计算。` }]
     }
   }
-  const perf = Math.round(base * (e.perf_ratio || 0.32))
+  // 顾问：劳务报酬，按月独立预扣 20%，不缴社保公积金，无绩效/加班
+  if (type === 'consultant') {
+    const amount = base
+    const tax = consultantTax(amount)
+    const net = amount - tax
+    return {
+      employee_id: e.id, name: e.name, grade: e.grade, status: 'active', period, city: e.city,
+      base: amount, perf: 0, ot: 0, gross: amount, social: 0, fund: 0, supplemental_fund: 0, special: 0, tax, net,
+      employment_type: 'consultant',
+      flags: [{ kind: 'info', text: '顾问 · 劳务报酬', detail: '按劳务报酬统一预扣 20%（减 20% 或 800 后 ×20%），不缴社保公积金；年度汇算补退税由个人自行办理。' }]
+    }
+  }
+  const perf = Math.round(base * (e.perf_ratio ?? 0.32))
   const ot = e.ot_amount || 0
   const gross = base + perf + ot
-  const { social, fund } = socialFund(base, e.city)
+  const isIntern = type === 'intern'
+  const { social, fund, supplemental_fund } = isIntern ? { social: 0, fund: 0, supplemental_fund: 0 } : socialFund(base, e.city, e.supplemental_fund_rate)
   const special = e.special_deduction || 0
-  const net = gross - social - fund // 税在累计环节追加
+  const net = gross - social - fund - supplemental_fund // 税在累计环节追加
   const flags = []
+  if (isIntern) flags.push({ kind: 'info', text: '实习生 · 工资薪金', detail: '在校生实习按工资薪金累计预扣（每月 5000 减除 + 专项附加），不缴社保公积金。' })
+  if (e.supplemental_fund_rate > 0) flags.push({ kind: 'info', text: '含补充公积金', detail: `补充公积金个人缴纳 ${(e.supplemental_fund_rate * 100).toFixed(0)}%（与基本公积金一并作为个税专项扣除）。` })
   if (e.flag === '社保基数调整') flags.push({ kind: 'warn', text: '社保基数调整 ▸', detail: '本月社保基数按当年新基数调整，个人部分变化已按政策校验。' })
   if (e.flag === '转正生效') flags.push({ kind: 'ok', text: '转正生效' })
   if (e.flag === '加班费存疑') flags.push({ kind: 'bad', text: '加班费存疑 ▸', detail: '⚠️ 合规预检：休息日加班应为 2 倍，当前按 1.5 倍计算。来源：《劳动法》第 44 条。已阻断确认，请 HR 处理。' })
   if (e.flag === '留才预警') flags.push({ kind: 'warn', text: '留才预警' })
-  return { employee_id: e.id, name: e.name, grade: e.grade, status: 'active', period, city: e.city, base, perf, ot, gross, social, fund, special, flags }
+  return { employee_id: e.id, name: e.name, grade: e.grade, status: 'active', period, city: e.city, base, perf, ot, gross, social, fund, supplemental_fund, special, flags, employment_type: type }
 }
 
 // 累计预扣法：按月顺序处理，逐员工维护累计状态
@@ -89,11 +114,11 @@ export function computeCumulative(periods, employees) {
       if (!hiredBefore) continue
       if (e.status === 'departed' && e.leave_month !== period) continue
       const parts = monthlyParts(e, period)
-      if (parts.status === 'departed') { allRows.push(parts); continue } // 离职结算独立计税
+      if (parts.status === 'departed' || parts.employment_type === 'consultant') { allRows.push(parts); continue } // 离职结算/顾问劳务报酬 独立计税，不累计
       // 累计预扣
       const st = state.get(e.id) || { cumIncome: 0, cumDeduct: 0, cumSpecial: 0, withheld: 0, months: 0 }
       st.cumIncome += parts.gross
-      st.cumDeduct += 5000 + parts.social + parts.fund
+      st.cumDeduct += 5000 + parts.social + parts.fund + (parts.supplemental_fund || 0)
       st.cumSpecial += parts.special
       st.months++
       const cumTaxable = Math.max(0, st.cumIncome - st.cumDeduct - st.cumSpecial)
@@ -101,23 +126,34 @@ export function computeCumulative(periods, employees) {
       const monthTax = cumTax - st.withheld
       st.withheld = cumTax
       state.set(e.id, st)
-      allRows.push({ ...parts, tax: Math.max(0, monthTax), net: parts.gross - parts.social - parts.fund - monthTax })
+      allRows.push({ ...parts, tax: Math.max(0, monthTax), net: parts.gross - parts.social - parts.fund - (parts.supplemental_fund || 0) - monthTax })
     }
   }
   return allRows
 }
 
-// 单月兜底（period 不在历史种子内时用月度预扣表，标注简化口径）
+// 生成月份序列 [start, end]（含端点，YYYY-MM）
+export function monthRange(start, end) {
+  const [sy, sm] = start.split('-').map(Number)
+  const [ey, em] = end.split('-').map(Number)
+  const out = []
+  let y = sy, m = sm
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`)
+    m++
+    if (m === 13) { m = 1; y++ }
+    if (out.length > 120) break // 安全上限
+  }
+  return out
+}
+
+// 单月兜底（period 不在历史种子内时，同样按累计预扣法计算，保持口径一致）
 export function computeMonthFallback(period, employees) {
-  return employees
-    .filter(e => (e.status !== 'departed' || e.leave_month === period))
-    .map(e => {
-      const parts = monthlyParts(e, period)
-      if (parts.status === 'departed') return parts
-      const taxable = Math.max(0, parts.gross - 5000 - parts.social - parts.fund - parts.special)
-      const tax = taxMonthly(taxable)
-      return { ...parts, tax, net: parts.gross - parts.social - parts.fund - tax }
-    })
+  // 从 2025-01（种子起点）累计到目标月份，复用累计预扣逻辑，取目标月结果
+  const start = '2025-01'
+  if (period < start) return []
+  const periods = monthRange(start, period)
+  return computeCumulative(periods, employees).filter(r => r.period === period)
 }
 
 // 月度预扣表（兜底用；正式链路为累计预扣）
