@@ -196,6 +196,24 @@ const MIGRATIONS = [
   {
     version: 7,
     sql: `ALTER TABLE payroll ADD COLUMN supplemental_fund INTEGER DEFAULT 0;`
+  },
+  // v8：报销与预支（Expense Claim + Employee Advance，参考 Frappe HR）
+  {
+    version: 8,
+    sql: `CREATE TABLE IF NOT EXISTS expense_claims(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL,
+            expense_type TEXT DEFAULT '其他', amount INTEGER NOT NULL, claim_date TEXT,
+            description TEXT, status TEXT DEFAULT 'submitted',
+            submitted_by TEXT, submitted_at TEXT,
+            approver TEXT, approved_at TEXT, comment TEXT,
+            advance_offset INTEGER DEFAULT 0
+          );
+          CREATE TABLE IF NOT EXISTS employee_advances(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL, reason TEXT, advance_date TEXT,
+            status TEXT DEFAULT 'submitted', outstanding INTEGER,
+            approver TEXT, approved_at TEXT, comment TEXT
+          );`
   }
 ]
 export function migrate() {
@@ -425,6 +443,33 @@ export function seedIfEmpty() {
   seedV3()
   // ── v6 种子：期权台账 + 期权池 ──
   seedV6()
+  // ── v8 种子：报销与预支 ──
+  seedV8()
+}
+
+// ── v8 种子：报销单 + 预支（参考 Frappe HR Expense Claim / Employee Advance）──
+const EXPENSE_CLAIMS_SEED = [
+  { employee_id: 1, expense_type: '差旅', amount: 1500, claim_date: '2025-06-10', description: '上海→深圳客户拜访高铁+住宿', status: 'approved', submitted_by: '张三', submitted_at: '2025-06-11', approver: 'HR 李明', approved_at: '2025-06-12', comment: '符合差旅标准', advance_offset: 0 },
+  { employee_id: 1, expense_type: '餐饮', amount: 300, claim_date: '2025-06-20', description: '团队聚餐', status: 'submitted', submitted_by: '张三', submitted_at: '2025-06-21', advance_offset: 0 },
+  { employee_id: 12, expense_type: '办公', amount: 800, claim_date: '2025-06-15', description: '办公用品采购', status: 'approved', submitted_by: '周HR', submitted_at: '2025-06-16', approver: '创始人', approved_at: '2025-06-16', comment: '', advance_offset: 0 },
+  { employee_id: 14, expense_type: '招待', amount: 2000, claim_date: '2025-06-18', description: '客户商务宴请', status: 'submitted', submitted_by: '钱经理', submitted_at: '2025-06-19', advance_offset: 0 }
+]
+const ADVANCES_SEED = [
+  { employee_id: 1, amount: 5000, reason: '出差预支差旅费', advance_date: '2025-06-05', status: 'approved', outstanding: 2000, approver: 'HR 李明', approved_at: '2025-06-05', comment: '' }
+]
+function seedV8() {
+  if (db.prepare('SELECT COUNT(*) c FROM expense_claims').get().c === 0) {
+    const ins = db.prepare('INSERT INTO expense_claims(employee_id,expense_type,amount,claim_date,description,status,submitted_by,submitted_at,approver,approved_at,comment,advance_offset) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    const N = v => v ?? null
+    EXPENSE_CLAIMS_SEED.forEach(x => ins.run(x.employee_id, x.expense_type, x.amount, x.claim_date, x.description, x.status, x.submitted_by, x.submitted_at, N(x.approver), N(x.approved_at), N(x.comment), N(x.advance_offset) ?? 0))
+    console.log(`[seed] v8 报销单灌库 ${EXPENSE_CLAIMS_SEED.length} 条`)
+  }
+  if (db.prepare('SELECT COUNT(*) c FROM employee_advances').get().c === 0) {
+    const ins = db.prepare('INSERT INTO employee_advances(employee_id,amount,reason,advance_date,status,outstanding,approver,approved_at,comment) VALUES(?,?,?,?,?,?,?,?,?)')
+    const N = v => v ?? null
+    ADVANCES_SEED.forEach(x => ins.run(x.employee_id, x.amount, x.reason, x.advance_date, x.status, x.outstanding, N(x.approver), N(x.approved_at), N(x.comment)))
+    console.log('[seed] v8 预支灌库 1 条')
+  }
 }
 
 // ── v6 种子：期权池 + 授予台账（与 employees.annual_option_value 口径对齐）──

@@ -130,3 +130,12 @@ headcount_plan(id, department_id, year_month, planned, note)   -- 编制计划
 - 种子新增演示：顾工·顾问（模拟IC P6，3 万/月，劳务报酬预扣 5,200 → 实发 24,800）、小陈·实习（数字验证，8 千/月，累计预扣 90 → 实发 7,910）
 - 前端：员工列表/表单/档案页显示「正式 / 顾问 / 实习生」用工类型
 - 修复：`perf_ratio || 0.32` → `?? 0.32`（0 绩效被 falsy 误回退）
+
+### 8.6 报销与预支（v8，参考 Frappe HR Expense Claim / Employee Advance）
+
+- **数据模型**：`expense_claims`（报销单：类型/金额/日期/说明/状态/核销预支金额/审批留痕）+ `employee_advances`（预支：金额/事由/未核销余额/状态）
+- **报销流程**：提交 → 审批（approve/reject，留痕）→ 打款（paid）；费用类型：差旅/餐饮/交通/办公/招待/其他
+- **预支流程**：申请 → 发放（outstanding=金额）→ 报销核销（自动扣减 outstanding，结清标记 cleared）或还款（repay）
+- **核销联动**：报销审批通过时，按 `advance_offset` 从该员工未核销预支中自动扣减（实测 2000→1000）
+- **角色权限**：emp 可提交/查看本人（只能看自己），审批限 hr/founder；已审批的报销/预支不可删除
+- 修复：org 挂载的 `writeAuth` 曾全局拦截所有 /api 非 GET 请求（导致 emp 报销被 403），已改为 org.js 内部写操作加角色中间件

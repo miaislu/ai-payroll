@@ -1,8 +1,12 @@
 // 组织架构：部门树 + 员工入转调离事件
 import { Router } from 'express'
 import { db } from '../db.js'
+import { auth } from '../lib/auth.js'
 
 export const org = Router()
+
+// 写操作统一限 hr/founder
+const admin = auth(['hr', 'founder'])
 
 // ── 部门 ──
 org.get('/departments', (req, res) => {
@@ -20,14 +24,14 @@ org.get('/departments', (req, res) => {
   res.json({ list: rows, tree: roots, headcount })
 })
 
-org.post('/departments', (req, res) => {
+org.post('/departments', admin, (req, res) => {
   const { name, parent_id = null, head = '', budget_owner = '' } = req.body || {}
   if (!name) return res.status(400).json({ error: '缺少部门名称' })
   const r = db.prepare('INSERT INTO departments(name,parent_id,head,budget_owner) VALUES(?,?,?,?)').run(name, parent_id, head, budget_owner)
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 
-org.put('/departments/:id', (req, res) => {
+org.put('/departments/:id', admin, (req, res) => {
   const { name, parent_id, head, budget_owner } = req.body || {}
   const r = db.prepare('UPDATE departments SET name=COALESCE(?,name), parent_id=?, head=COALESCE(?,head), budget_owner=COALESCE(?,budget_owner) WHERE id=?')
     .run(name || null, parent_id ?? null, head || null, budget_owner || null, req.params.id)
@@ -35,7 +39,7 @@ org.put('/departments/:id', (req, res) => {
   res.json({ ok: true, id: Number(req.params.id) })
 })
 
-org.delete('/departments/:id', (req, res) => {
+org.delete('/departments/:id', admin, (req, res) => {
   const id = Number(req.params.id)
   const child = db.prepare('SELECT COUNT(*) c FROM departments WHERE parent_id=?').get(id).c
   if (child > 0) return res.status(400).json({ error: `该部门下有 ${child} 个子部门，请先删除或迁移子部门` })
@@ -51,7 +55,7 @@ org.get('/employees/:id/events', (req, res) => {
   res.json(db.prepare('SELECT * FROM employee_events WHERE employee_id=? ORDER BY event_date').all(req.params.id))
 })
 
-org.post('/employees/:id/events', (req, res) => {
+org.post('/employees/:id/events', admin, (req, res) => {
   const { type, event_date, from_value = null, to_value = null, note = '' } = req.body || {}
   if (!type || !event_date) return res.status(400).json({ error: '缺少类型或日期' })
   const r = db.prepare('INSERT INTO employee_events(employee_id,type,event_date,from_value,to_value,note) VALUES(?,?,?,?,?,?)')
@@ -59,7 +63,7 @@ org.post('/employees/:id/events', (req, res) => {
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 
-org.delete('/events/:id', (req, res) => {
+org.delete('/events/:id', admin, (req, res) => {
   const r = db.prepare('DELETE FROM employee_events WHERE id=?').run(req.params.id)
   if (!r.changes) return res.status(404).json({ error: '事件不存在' })
   res.json({ ok: true })

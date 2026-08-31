@@ -9,6 +9,7 @@ import EmployeeProfile from './pages/EmployeeProfile.jsx'
 import Copilot from './pages/Copilot.jsx'
 import Option from './pages/Option.jsx'
 import Equity from './pages/Equity.jsx'
+import Expenses from './pages/Expenses.jsx'
 import Payslip from './pages/Payslip.jsx'
 import Settings from './pages/Settings.jsx'
 import { ApprovalsPage, BandApprovalPage, RaiseApprovalPage, OfferApprovalPage } from './pages/Approvals.jsx'
@@ -29,7 +30,7 @@ const PAGES_COMP = {
   'band-approval': BandApprovalPage, 'raise-approval': RaiseApprovalPage, 'offer-approval': OfferApprovalPage,
   recruiting: Recruiting, candidates: Candidates, requisitions: Requisitions, interviews: Interviews,
   channels: Channels, org: Org, cost: CostDashboard, budget: Budget, forecast: Forecast,
-  'employee-profile': EmployeeProfile, equity: Equity
+  'employee-profile': EmployeeProfile, equity: Equity, expenses: Expenses
 }
 const DEMO_ACCOUNTS = [
   { username: 'founder', password: 'admin123', label: '创始人' },

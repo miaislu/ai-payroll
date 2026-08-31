@@ -152,3 +152,13 @@ export const createEquityGrant = body => api('/equity/grants', { method: 'POST',
 export const updateEquityGrant = (id, body) => api('/equity/grants/' + id, { method: 'PUT', body })
 export const deleteEquityGrant = id => api('/equity/grants/' + id, { method: 'DELETE' })
 export const getEquitySummary = () => api('/equity/summary')
+
+// ── v8：报销与预支 ──
+export const getExpenseClaims = () => api('/expense/claims')
+export const createExpenseClaim = body => api('/expense/claims', { method: 'POST', body })
+export const expenseClaimAction = (id, body) => api('/expense/claims/' + id + '/action', { method: 'POST', body })
+export const deleteExpenseClaim = id => api('/expense/claims/' + id, { method: 'DELETE' })
+export const getAdvances = () => api('/expense/advances')
+export const createAdvance = body => api('/expense/advances', { method: 'POST', body })
+export const advanceAction = (id, body) => api('/expense/advances/' + id + '/action', { method: 'POST', body })
+export const deleteAdvance = id => api('/expense/advances/' + id, { method: 'DELETE' })

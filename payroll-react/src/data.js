@@ -48,6 +48,7 @@ export const PAGES = {
   forecast: ['成本预测', '编制计划 → 未来 6 个月成本'],
   // 其他
   copilot: ['AI 助手', '制度 + 政策 + 招聘/成本知识问答'],
+  expenses: ['报销与预支', '员工报销 · 预支 · 审批 · 核销'],
   approvals: ['审批中心', '流程与审批 · F1/F2/F4/F5'],
   'band-approval': ['带宽审批', 'F1 流程 · 2025 下半年带宽刷新'],
   'raise-approval': ['调薪审批', 'F4 流程 · 王** 调薪申请'],
@@ -55,9 +56,9 @@ export const PAGES = {
   settings: ['知识库 / 设置', '管理员视角 · 治理与数据源']
 }
 export const ROLE_VIEWS = {
-  founder: ['dashboard', 'recruiting', 'candidates', 'requisitions', 'interviews', 'channels', 'employees', 'employee-profile', 'org', 'payroll', 'benchmark', 'option', 'equity', 'cost', 'budget', 'forecast', 'copilot', 'approvals', 'band-approval', 'raise-approval', 'offer-approval', 'settings'],
-  hr: ['dashboard', 'recruiting', 'candidates', 'requisitions', 'interviews', 'channels', 'employees', 'employee-profile', 'org', 'payroll', 'benchmark', 'option', 'equity', 'cost', 'budget', 'forecast', 'copilot', 'approvals', 'band-approval', 'raise-approval', 'offer-approval', 'settings'],
-  emp: ['dashboard', 'copilot', 'payslip']
+  founder: ['dashboard', 'recruiting', 'candidates', 'requisitions', 'interviews', 'channels', 'employees', 'employee-profile', 'org', 'payroll', 'benchmark', 'option', 'equity', 'cost', 'budget', 'forecast', 'copilot', 'expenses', 'approvals', 'band-approval', 'raise-approval', 'offer-approval', 'settings'],
+  hr: ['dashboard', 'recruiting', 'candidates', 'requisitions', 'interviews', 'channels', 'employees', 'employee-profile', 'org', 'payroll', 'benchmark', 'option', 'equity', 'cost', 'budget', 'forecast', 'copilot', 'expenses', 'approvals', 'band-approval', 'raise-approval', 'offer-approval', 'settings'],
+  emp: ['dashboard', 'copilot', 'payslip', 'expenses']
 }
 export const PARENT = { 'band-approval': 'approvals', 'raise-approval': 'approvals', 'offer-approval': 'approvals', 'employee-profile': 'employees' }
 export const NAV = [
@@ -83,6 +84,7 @@ export const NAV = [
   { page: 'forecast', ico: '🔮', label: '成本预测' },
   { group: '协同' },
   { page: 'approvals', ico: '✅', label: '审批中心', badge: true },
+  { page: 'expenses', ico: '🧾', label: '报销与预支' },
   { page: 'copilot', ico: '💬', label: 'AI 助手' },
   { page: 'settings', ico: '⚙️', label: '知识库 / 设置' }
 ]

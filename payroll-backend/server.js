@@ -16,6 +16,7 @@ import { recruiting } from './routes/recruiting.js'
 import { cost } from './routes/cost.js'
 import { employee } from './routes/employee.js'
 import { equity } from './routes/equity.js'
+import { expense } from './routes/expense.js'
 
 seedIfEmpty()
 const app = express()
@@ -107,19 +108,17 @@ app.delete('/api/employees/:id', auth(['hr', 'founder']), (req, res) => {
   res.json({ ok: true, id: Number(req.params.id) })
 })
 
-// ── v2 模块：组织架构 / 招聘管理 / 薪酬成本 / 员工档案 / 期权 ──
-// 写操作（非 GET）统一要求 hr/founder 角色；GET 仅需登录
-function writeAuth(req, res, next) {
-  if (req.method === 'GET') return next()
-  return auth(['hr', 'founder'])(req, res, next)
-}
-app.use('/api', auth(), writeAuth, org)
+// ── v2 模块：组织架构 / 招聘管理 / 薪酬成本 / 员工档案 / 期权 / 报销 ──
+// 组织架构：写操作在 org.js 内部按角色控制；GET 仅登录
+app.use('/api', auth(), org)
 // 招聘/成本/期权数据对公司级敏感，GET 与写操作均限 hr/founder
 app.use('/api/recruiting', auth(['hr', 'founder']), recruiting)
 app.use('/api/cost', auth(['hr', 'founder']), cost)
 app.use('/api/equity', auth(['hr', 'founder']), equity)
 // v3：员工完整档案（含证件/银行卡等 PII，仅 hr/founder 可读；emp 经脱敏的 /api/employees 与 /payslip/me 看本人）
 app.use('/api/employees', auth(['hr', 'founder']), employee)
+// v8：报销与预支（emp 可提交/查看本人，审批限 hr/founder，内部按角色控制）
+app.use('/api/expense', auth(), expense)
 
 // ── 对标 ──
 app.get('/api/benchmarks/directions', auth(), (req, res) => {
