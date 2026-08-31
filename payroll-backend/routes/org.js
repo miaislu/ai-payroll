@@ -45,6 +45,10 @@ org.delete('/departments/:id', admin, (req, res) => {
   if (child > 0) return res.status(400).json({ error: `该部门下有 ${child} 个子部门，请先删除或迁移子部门` })
   const emp = db.prepare('SELECT COUNT(*) c FROM employees WHERE department_id=?').get(id).c
   if (emp > 0) return res.status(400).json({ error: `该部门下仍有 ${emp} 名员工，请先迁移员工` })
+  for (const [table, label] of [['job_requisitions', '招聘需求'], ['cost_budgets', '预算'], ['headcount_plan', '编制计划']]) {
+    const count = db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE department_id=?`).get(id).c
+    if (count > 0) return res.status(409).json({ error: `该部门仍关联 ${count} 条${label}，请先迁移或关闭` })
+  }
   const r = db.prepare('DELETE FROM departments WHERE id=?').run(id)
   if (!r.changes) return res.status(404).json({ error: '部门不存在' })
   res.json({ ok: true, id })

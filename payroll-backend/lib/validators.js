@@ -9,7 +9,7 @@ export const JOB_FAMILIES = [...DIRECTIONS_KEYS, ...SUPPORT_FAMILIES, ...MGMT_FA
 export const CATEGORIES = ['tech', 'support', 'mgmt']
 export const CATEGORY_LABELS = { tech: '技术', support: '职能', mgmt: '管理' }
 export const CITY_KEYS = ['上海', '北京', '深圳', '苏州', '无锡', '合肥', '武汉', '成都', '西安', '杭州', '南京', '广州', '厦门']
-export const GRADES = ['P4', 'P5', 'P6', 'M1']
+export const GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
 
 export function categoryOf(jobFamily) {
   if (DIRECTIONS_KEYS.includes(jobFamily)) return 'tech'

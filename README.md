@@ -34,6 +34,8 @@ cd payroll-react && npm install && npm run dev
 
 演示账号：
 
+> 仅在非生产环境、空数据库首次启动时创建。`NODE_ENV=production` 时不会创建演示账号，必须通过 `INITIAL_ADMIN_PASSWORD` 创建初始管理员。
+
 | 账号 | 密码 | 角色 |
 |---|---|---|
 | founder | admin123 | 创始人（全量权限） |
@@ -65,3 +67,13 @@ cd payroll-react && npm install && npm run dev
 ## 数据库
 
 首次启动自动建表 + 灌种子（半导体场景：7 部门 / 5 招聘需求 / 8 候选人 / 5 渠道 / 12 条预算 / 11 条编制计划 / 6 条员工事件）。增量表结构变更走 `db.js` 的 `MIGRATIONS` 迁移机制。删除 `payroll.db` 可重置。
+
+## 验证
+
+```bash
+cd payroll-backend && npm test
+cd payroll-react && npm run build
+cd benchmark-data && python3 validate_benchmark.py
+```
+
+基准数据脚本只自动验证结构、区间、元数据与数字锚点；“通过”不替代对来源正文、样本口径和数值推导的人工复核。生产部署必须使用 HTTPS、至少 12 位初始管理员密码、独立低权限系统用户，并确认数据库卷具备静态加密和备份恢复能力。

@@ -192,25 +192,35 @@ const PARSE_PROMPT = `你是资深 HR 简历解析器。请从下面的中文简
 {TEXT}
 """`
 
-export async function parseResume(text) {
+function redactSensitive(text) {
+  return text
+    .replace(/\b1[3-9]\d{9}\b/g, '[手机号已脱敏]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[邮箱已脱敏]')
+    .replace(/\b\d{17}[\dXx]\b/g, '[身份证号已脱敏]')
+    .replace(/\b\d{12,19}\b/g, '[长号码已脱敏]')
+}
+
+export async function parseResume(text, { allowExternal = false } = {}) {
   const truncated = text.slice(0, 6000)
-  if (llmConfigured()) {
+  if (llmConfigured() && allowExternal) {
     try {
+      const local = parseResumeByRules(truncated)
       const raw = await chat([
         { role: 'system', content: '你是精确的 JSON 输出器。' },
-        { role: 'user', content: PARSE_PROMPT.replace('{TEXT}', truncated) }
+        { role: 'user', content: PARSE_PROMPT.replace('{TEXT}', redactSensitive(truncated)) }
       ], { maxTokens: 1200, temperature: 0.1 })
       const json = raw.replace(/```json|```/g, '').trim()
       const m = json.match(/\{[\s\S]*\}/)
       if (m) {
         const parsed = JSON.parse(m[0])
+        parsed.basic = { ...(parsed.basic || {}), ...Object.fromEntries(Object.entries(local.basic || {}).filter(([k]) => ['mobile', 'personal_email'].includes(k))) }
         return { ...enrichParsed(parsed, truncated), engine: 'llm', model: LLM_MODEL }
       }
     } catch (e) {
       console.warn('[resume] LLM 解析失败，降级规则:', e.message)
     }
   }
-  return { ...enrichParsed(parseResumeByRules(truncated), truncated), engine: 'rules' }
+  return { ...enrichParsed(parseResumeByRules(truncated), truncated), engine: allowExternal ? 'rules-fallback' : 'rules-local' }
 }
 
 // 解析结果 → 应用档案字段映射（与 routes/employee.js 白名单一致）

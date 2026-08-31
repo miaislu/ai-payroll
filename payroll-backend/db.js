@@ -7,9 +7,12 @@ import path from 'node:path'
 import { computeCumulative } from './lib/payroll.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+process.umask(0o077)
 export const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'payroll.db')
 export const db = new DatabaseSync(DB_PATH)
 db.exec('PRAGMA journal_mode=WAL')
+db.exec('PRAGMA foreign_keys=ON')
+db.exec('PRAGMA busy_timeout=5000')
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);
@@ -214,6 +217,42 @@ const MIGRATIONS = [
             status TEXT DEFAULT 'submitted', outstanding INTEGER,
             approver TEXT, approved_at TEXT, comment TEXT
           );`
+  },
+  // v9：离职补偿显式录入、候选人入职幂等关联、审计日志
+  {
+    version: 9,
+    sql: `ALTER TABLE employees ADD COLUMN severance_amount INTEGER DEFAULT 0;
+          ALTER TABLE payroll ADD COLUMN severance INTEGER DEFAULT 0;
+          ALTER TABLE candidates ADD COLUMN employee_id INTEGER;
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_candidates_employee_id ON candidates(employee_id) WHERE employee_id IS NOT NULL;
+          CREATE TABLE IF NOT EXISTS audit_logs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_user_id INTEGER, actor_name TEXT, action TEXT NOT NULL,
+            entity_type TEXT NOT NULL, entity_id TEXT, before_json TEXT, after_json TEXT,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, id);`
+  },
+  // v10：仅识别并重建仓库自带的 2025-01~06 演示工资快照；先归档，绝不改写其他期间的真实历史数据。
+  {
+    version: 10,
+    sql: `CREATE TABLE IF NOT EXISTS payroll_archive_v10 AS SELECT * FROM payroll WHERE 0;
+          INSERT INTO payroll_archive_v10 SELECT * FROM payroll
+          WHERE (SELECT COUNT(*) FROM payroll) <= 100
+            AND (SELECT COUNT(DISTINCT period) FROM payroll) = 6
+            AND NOT EXISTS(SELECT 1 FROM payroll WHERE period NOT BETWEEN '2025-01' AND '2025-06');
+          DELETE FROM payroll
+          WHERE (SELECT COUNT(*) FROM payroll) <= 100
+            AND (SELECT COUNT(DISTINCT period) FROM payroll) = 6
+            AND NOT EXISTS(SELECT 1 FROM payroll WHERE period NOT BETWEEN '2025-01' AND '2025-06');`
+  },
+  // v11：工资批次提交状态持久化
+  {
+    version: 11,
+    sql: `CREATE TABLE IF NOT EXISTS payroll_runs(
+            period TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'submitted',
+            submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL
+          );`
   }
 ]
 export function migrate() {
@@ -260,6 +299,30 @@ export function createSession(userId) {
   const expires = Date.now() + 12 * 60 * 60 * 1000 // 12h
   db.prepare('INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)').run(token, userId, expires)
   return token
+}
+
+const AUDIT_REDACT = new Set(['password_hash', 'token', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'phone', 'personal_email', 'email', 'resume_parsed', 'resume_path', 'parsed_data'])
+function sanitizeAudit(value) {
+  if (Array.isArray(value)) return value.map(sanitizeAudit)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, AUDIT_REDACT.has(key) ? '[REDACTED]' : sanitizeAudit(item)]))
+}
+
+export function audit(user, action, entityType, entityId, before = null, after = null) {
+  db.prepare('INSERT INTO audit_logs(actor_user_id,actor_name,action,entity_type,entity_id,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(user?.id || null, user?.name || 'system', action, entityType, entityId == null ? null : String(entityId), before == null ? null : JSON.stringify(sanitizeAudit(before)), after == null ? null : JSON.stringify(sanitizeAudit(after)), new Date().toISOString())
+}
+
+export function inTransaction(fn) {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = fn()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 const USERS = [
@@ -414,7 +477,13 @@ export function seedIfEmpty() {
   const u = db.prepare('SELECT COUNT(*) c FROM users').get()
   if (u.c === 0) {
     const insU = db.prepare('INSERT INTO users(username,password_hash,role,name) VALUES(?,?,?,?)')
-    USERS.forEach(u => insU.run(u.username, hashPassword(u.password), u.role, u.name))
+    if (process.env.NODE_ENV === 'production') {
+      const password = process.env.INITIAL_ADMIN_PASSWORD || ''
+      if (password.length < 12) throw new Error('生产环境首次启动必须设置至少 12 位 INITIAL_ADMIN_PASSWORD')
+      insU.run(process.env.INITIAL_ADMIN_USERNAME || 'founder', hashPassword(password), 'founder', process.env.INITIAL_ADMIN_NAME || '创始人')
+    } else {
+      USERS.forEach(u => insU.run(u.username, hashPassword(u.password), u.role, u.name))
+    }
     const insE = db.prepare('INSERT INTO employees(name,grade,job_family,city,category,status,monthly_base,perf_ratio,ot_amount,flag,hire_month,leave_month,special_deduction,employment_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     EMPLOYEES.forEach(e => insE.run(e.name, e.grade, e.job_family, e.city, e.category || 'tech', e.status || 'active', e.monthly_base, e.perf_ratio, e.ot_amount, e.flag || null, e.hire_month || '2025-01', e.leave_month || null, e.special_deduction || 0, e.employment_type || 'employee'))
     const insA = db.prepare('INSERT INTO approvals(id,type,title,who,key,summary,status,page) VALUES(?,?,?,?,?,?,?,?)')
@@ -668,10 +737,10 @@ function assignEmployeeDepartments() {
 // 生成 2025-01 ~ 2025-06 历史工资单（累计预扣法 + 城市基数封顶，供趋势/仪表盘使用）
 export function seedPayroll() {
   const employees = db.prepare('SELECT * FROM employees').all()
-  const ins = db.prepare('INSERT INTO payroll(period,employee_id,name,grade,status,base,perf,ot,social,fund,supplemental_fund,tax,net,flags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const ins = db.prepare('INSERT INTO payroll(period,employee_id,name,grade,status,base,perf,ot,social,fund,supplemental_fund,severance,tax,net,flags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
   let rows = 0
   for (const row of computeCumulative(PERIODS, employees)) {
-    ins.run(row.period, row.employee_id, row.name, row.grade, row.status, row.base, row.perf, row.ot, row.social, row.fund, row.supplemental_fund || 0, row.tax, row.net, JSON.stringify(row.flags))
+    ins.run(row.period, row.employee_id, row.name, row.grade, row.status, row.base, row.perf, row.ot, row.social, row.fund, row.supplemental_fund || 0, row.severance || 0, row.tax, row.net, JSON.stringify(row.flags))
     rows++
   }
   console.log(`[seed] payroll 生成 ${rows} 条（累计预扣法，${PERIODS.length} 个月）`)

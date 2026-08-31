@@ -6,7 +6,7 @@ import {
   createEducation, deleteEducation,
   createWorkExperience, deleteWorkExperience,
   createFamily, deleteFamily,
-  getResumes, uploadResume, parseResume, applyResume, deleteResume, resumeFileUrl
+  getResumes, uploadResume, parseResume, applyResume, deleteResume, downloadResume
 } from '../api.js'
 
 const MARITAL = ['已婚', '未婚', '离异', '其他']
@@ -115,9 +115,10 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
     } catch { toast('上传失败（支持 txt/md/docx/pdf，≤10MB）') } finally { setUploading(false) }
   }
   const doParse = async rid => {
+    const allowExternal = confirm('是否允许将脱敏后的简历正文发送给已配置的外部 AI？\n选择“取消”将仅使用本地规则解析。')
     setParsing(rid)
     try {
-      const r = await parseResume(empId, rid)
+      const r = await parseResume(empId, rid, allowExternal)
       const name = resumes.find(x => x.id === rid)?.original_name || '简历'
       setPreview({ rid, name, parsed: r.parsed, engine: r.engine })
       toast('解析完成（' + r.engine + '）')
@@ -248,7 +249,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
       {/* 简历附件 + AI 解析（上传 → 解析 → 预览确认 → 一键应用） */}
       <Section title={<>简历与 AI 解析 <Chip kind="info">{resumes.length} 份</Chip></>} style={{ marginTop: 14 }}>
         <div className="toolbar">
-          <Hint>上传简历（txt/md/docx/pdf，≤10MB）→ AI 提取关键数据 → 预览确认 → 一键填充档案；简历作为附件永久保留在本页</Hint>
+          <Hint>上传简历（txt/md/docx/pdf，≤10MB）→ 选择本地规则或脱敏后调用外部 AI → 预览确认 → 一键填充档案</Hint>
           <div style={{ flex: 1 }} />
           <input ref={fileRef} type="file" accept=".txt,.md,.text,.docx,.pdf" style={{ display: 'none' }} onChange={onPickFile} />
           <Btn primary disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? '上传中…' : '📄 上传简历'}</Btn>
@@ -270,7 +271,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
                 <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <Btn sm disabled={parsing === r.id} onClick={() => doParse(r.id)}>{parsing === r.id ? '解析中…' : '🤖 AI 解析'}</Btn>
                   <Btn sm onClick={() => setPreview({ rid: r.id, name: r.original_name, parsed: r.parsed_data ? JSON.parse(r.parsed_data) : null, engine: r.parse_engine, saved: true })} disabled={!r.parsed_data}>预览</Btn>
-                  <a className="btn sm" style={{ textDecoration: 'none' }} href={resumeFileUrl(empId, r.id)} target="_blank" rel="noreferrer">下载</a>
+                  <Btn sm onClick={() => downloadResume(empId, r.id, r.original_name || r.filename).catch(() => toast('下载失败'))}>下载</Btn>
                   <Btn sm onClick={() => doDeleteResume(r.id)}>删除</Btn>
                 </td>
               </tr>

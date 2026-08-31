@@ -3,7 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import { randomUUID } from 'node:crypto'
 import { rmSync } from 'node:fs'
-import { db, seedIfEmpty, verifyPassword, createSession } from './db.js'
+import { audit, db, hashPassword, inTransaction, seedIfEmpty, verifyPassword, createSession } from './db.js'
 import { benchmarkCard, optionMetrics, optionSensitivity } from './lib/calc.js'
 import { chat, llmConfigured, LLM_MODEL, LLM_BASE } from './lib/llm.js'
 import { retrieve, buildContext, contextSources, COPILOT_SYSTEM } from './lib/rag.js'
@@ -20,9 +20,20 @@ import { expense } from './routes/expense.js'
 
 seedIfEmpty()
 const app = express()
+app.disable('x-powered-by')
+app.set('trust proxy', 'loopback')
 // CORS 白名单（仅前端同源/本机开发端口；避免任意站点携带 token 读取 API）
-app.use(cors({ origin: [/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/], credentials: false }))
-app.use(express.json())
+const configuredOrigins = (process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)
+app.use(cors({ origin: [/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/, ...configuredOrigins], credentials: false }))
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'")
+  next()
+})
+app.use(express.json({ limit: '100kb' }))
 
 // ── 健康检查 ──
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }))
@@ -31,10 +42,14 @@ app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }))
 const loginAttempts = new Map()
 const MAX_LOGIN_FAILS = 5
 const LOGIN_LOCK_MS = 15 * 60 * 1000
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000
+  for (const [key, value] of loginAttempts) if ((value.lastAt || 0) < cutoff && value.lockedUntil < Date.now()) loginAttempts.delete(key)
+}, 10 * 60 * 1000).unref()
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {}
   if (!username || !password) return res.status(400).json({ error: '缺少用户名或密码' })
-  const key = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim()
+  const key = `${req.ip || 'unknown'}:${String(username).trim().toLowerCase()}`
   const now = Date.now()
   const rec = loginAttempts.get(key)
   if (rec && rec.lockedUntil > now) {
@@ -42,9 +57,14 @@ app.post('/api/auth/login', (req, res) => {
   }
   const u = db.prepare('SELECT * FROM users WHERE username=?').get(String(username).trim())
   if (!u || !verifyPassword(String(password), u.password_hash)) {
-    const r = rec || { count: 0, lockedUntil: 0 }
+    const r = rec || { count: 0, lockedUntil: 0, lastAt: now }
     r.count++
+    r.lastAt = now
     if (r.count >= MAX_LOGIN_FAILS) { r.lockedUntil = now + LOGIN_LOCK_MS; r.count = 0 }
+    if (!loginAttempts.has(key) && loginAttempts.size >= 10000) {
+      const oldest = [...loginAttempts.entries()].sort((a, b) => (a[1].lastAt || 0) - (b[1].lastAt || 0))[0]?.[0]
+      if (oldest) loginAttempts.delete(oldest)
+    }
     loginAttempts.set(key, r)
     return res.status(401).json({ error: '用户名或密码错误' })
   }
@@ -57,9 +77,50 @@ app.post('/api/auth/logout', auth(), (req, res) => {
   res.json({ ok: true })
 })
 
+// ── 账号管理（生产环境由 founder 创建 HR/员工账号；不返回密码哈希）──
+app.get('/api/users', auth(['founder']), (req, res) => {
+  res.json(db.prepare('SELECT id,username,role,name,employee_id FROM users ORDER BY id').all())
+})
+app.post('/api/users', auth(['founder']), (req, res) => {
+  const { username, password, role, name, employee_id = null } = req.body || {}
+  if (!/^[A-Za-z0-9_.-]{3,40}$/.test(String(username || ''))) return res.status(400).json({ error: '用户名须为 3-40 位字母、数字或 _.-' })
+  if (String(password || '').length < 12) return res.status(400).json({ error: '密码至少 12 位' })
+  if (!['founder', 'hr', 'emp'].includes(role)) return res.status(400).json({ error: '角色不合法' })
+  if (!String(name || '').trim()) return res.status(400).json({ error: '姓名必填' })
+  if (role === 'emp' && (!employee_id || !db.prepare('SELECT id FROM employees WHERE id=?').get(employee_id))) return res.status(400).json({ error: '员工账号必须关联有效员工档案' })
+  try {
+    const result = db.prepare('INSERT INTO users(username,password_hash,role,name,employee_id) VALUES(?,?,?,?,?)').run(username, hashPassword(password), role, String(name).trim(), employee_id || null)
+    audit(req.user, 'create', 'user', result.lastInsertRowid, null, { username, role, name, employee_id })
+    res.json({ ok: true, id: result.lastInsertRowid })
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) return res.status(409).json({ error: '用户名已存在' })
+    throw error
+  }
+})
+app.post('/api/users/:id/reset-password', auth(['founder']), (req, res) => {
+  const password = String(req.body?.password || '')
+  if (password.length < 12) return res.status(400).json({ error: '密码至少 12 位' })
+  const changed = db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(password), req.params.id)
+  if (!changed.changes) return res.status(404).json({ error: '账号不存在' })
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(req.params.id)
+  audit(req.user, 'reset_password', 'user', req.params.id, null, { sessions_revoked: true })
+  res.json({ ok: true })
+})
+app.delete('/api/users/:id', auth(['founder']), (req, res) => {
+  if (Number(req.params.id) === req.user.id) return res.status(409).json({ error: '不能删除当前登录账号' })
+  const before = db.prepare('SELECT id,username,role,name,employee_id FROM users WHERE id=?').get(req.params.id)
+  if (!before) return res.status(404).json({ error: '账号不存在' })
+  inTransaction(() => {
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(req.params.id)
+    db.prepare('DELETE FROM users WHERE id=?').run(req.params.id)
+    audit(req.user, 'delete', 'user', req.params.id, before, null)
+  })
+  res.json({ ok: true })
+})
+
 // ── 员工 ──
 // emp 角色仅返回本人且字段脱敏（剔除薪资/PII），hr/founder 全量
-const EMP_SENSITIVE = ['monthly_base', 'perf_ratio', 'special_deduction', 'annual_option_value', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'personal_email', 'alternate_mobile', 'current_address', 'permanent_address']
+const EMP_SENSITIVE = ['monthly_base', 'perf_ratio', 'special_deduction', 'annual_option_value', 'severance_amount', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'personal_email', 'alternate_mobile', 'current_address', 'permanent_address']
 app.get('/api/employees', auth(), (req, res) => {
   const rows = db.prepare('SELECT e.*, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id=d.id ORDER BY e.id').all()
   if (req.user.role === 'emp') {
@@ -79,8 +140,12 @@ app.post('/api/employees', auth(['hr', 'founder']), (req, res) => {
   const status = ['active', 'offer', 'departed'].includes(b.status) ? b.status : 'active'
   const etype = ['employee', 'consultant', 'intern'].includes(b.employment_type) ? b.employment_type : 'employee'
   const sfund = Number(b.supplemental_fund_rate) >= 0 && Number(b.supplemental_fund_rate) <= 0.08 ? Number(b.supplemental_fund_rate) : 0
-  const r = db.prepare('INSERT INTO employees(name,grade,job_family,city,monthly_base,perf_ratio,special_deduction,hire_month,department_id,category,status,employment_type,supplemental_fund_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction, e.hire_month, b.department_id || null, e.category, status, etype, sfund)
+  const leaveMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.leave_month || '')) ? b.leave_month : null
+  const severance = Math.max(0, Math.round(Number(b.severance_amount) || 0))
+  if (status === 'departed' && !leaveMonth) return res.status(400).json({ error: '离职员工必须填写离职月份' })
+  const r = db.prepare('INSERT INTO employees(name,grade,job_family,city,monthly_base,perf_ratio,special_deduction,hire_month,department_id,category,status,employment_type,supplemental_fund_rate,leave_month,severance_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction, e.hire_month, b.department_id || null, e.category, status, etype, sfund, leaveMonth, severance)
+  audit(req.user, 'create', 'employee', r.lastInsertRowid, null, { ...e, status, employment_type: etype, leave_month: leaveMonth, severance_amount: severance })
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 app.put('/api/employees/:id', auth(['hr', 'founder']), (req, res) => {
@@ -90,20 +155,30 @@ app.put('/api/employees/:id', auth(['hr', 'founder']), (req, res) => {
   const status = ['active', 'offer', 'departed'].includes(b.status) ? b.status : 'active'
   const etype = ['employee', 'consultant', 'intern'].includes(b.employment_type) ? b.employment_type : 'employee'
   const sfund = Number(b.supplemental_fund_rate) >= 0 && Number(b.supplemental_fund_rate) <= 0.08 ? Number(b.supplemental_fund_rate) : 0
-  const r = db.prepare('UPDATE employees SET name=?,grade=?,job_family=?,city=?,monthly_base=?,perf_ratio=?,special_deduction=?,hire_month=?,department_id=?,category=?,status=?,employment_type=?,supplemental_fund_rate=? WHERE id=?')
-    .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction, e.hire_month, b.department_id ?? null, e.category, status, etype, sfund, req.params.id)
+  const leaveMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.leave_month || '')) ? b.leave_month : null
+  const severance = Math.max(0, Math.round(Number(b.severance_amount) || 0))
+  if (status === 'departed' && !leaveMonth) return res.status(400).json({ error: '离职员工必须填写离职月份' })
+  const before = db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id)
+  const r = db.prepare('UPDATE employees SET name=?,grade=?,job_family=?,city=?,monthly_base=?,perf_ratio=?,special_deduction=?,hire_month=?,department_id=?,category=?,status=?,employment_type=?,supplemental_fund_rate=?,leave_month=?,severance_amount=? WHERE id=?')
+    .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction, e.hire_month, b.department_id ?? null, e.category, status, etype, sfund, leaveMonth, severance, req.params.id)
   if (!r.changes) return res.status(404).json({ error: '员工不存在' })
+  audit(req.user, 'update', 'employee', req.params.id, before, { ...before, ...e, status, employment_type: etype, leave_month: leaveMonth, severance_amount: severance })
   res.json({ ok: true, id: Number(req.params.id) })
 })
 app.delete('/api/employees/:id', auth(['hr', 'founder']), (req, res) => {
-  const r = db.prepare('DELETE FROM employees WHERE id=?').run(req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '员工不存在' })
-  // 级联清理关联子表（期权授予/档案子表/事件/简历；payroll 历史保留作留痕）
   const empId = req.params.id
-  for (const t of ['option_grants', 'emergency_contacts', 'employee_education', 'employee_work_experience', 'employee_family', 'employee_events', 'employee_resumes']) {
-    db.prepare(`DELETE FROM ${t} WHERE employee_id=?`).run(empId)
-  }
   const resumes = db.prepare('SELECT file_path FROM employee_resumes WHERE employee_id=?').all(empId)
+  const employee = db.prepare('SELECT * FROM employees WHERE id=?').get(empId)
+  if (!employee) return res.status(404).json({ error: '员工不存在' })
+  if (db.prepare('SELECT 1 FROM payroll WHERE employee_id=? LIMIT 1').get(empId) || db.prepare('SELECT 1 FROM candidates WHERE employee_id=? LIMIT 1').get(empId)) {
+    return res.status(409).json({ error: '该员工已有工资或招聘历史，不可物理删除；请改为离职状态' })
+  }
+  inTransaction(() => {
+    for (const t of ['option_grants', 'emergency_contacts', 'employee_education', 'employee_work_experience', 'employee_family', 'employee_events', 'employee_resumes']) db.prepare(`DELETE FROM ${t} WHERE employee_id=?`).run(empId)
+    db.prepare('UPDATE users SET employee_id=NULL WHERE employee_id=?').run(empId)
+    db.prepare('DELETE FROM employees WHERE id=?').run(empId)
+    audit(req.user, 'delete', 'employee', empId, employee, null)
+  })
   for (const x of resumes) { try { rmSync(x.file_path, { force: true }) } catch { /* 忽略 */ } }
   res.json({ ok: true, id: Number(req.params.id) })
 })
@@ -142,19 +217,25 @@ app.get('/api/approvals', auth(['hr', 'founder']), (req, res) => {
     ref: a.ref_type === 'candidate' ? cands[a.ref_id] || null : null
   })))
 })
+app.get('/api/audit-logs', auth(['founder']), (req, res) => {
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100))
+  res.json(db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?').all(limit))
+})
 app.post('/api/approvals/:id/action', auth(['founder']), (req, res) => {
   const { action, key, comment } = req.body || {}
   if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: 'action 须为 approve/reject' })
   const a = db.prepare('SELECT * FROM approvals WHERE id=?').get(req.params.id)
   if (!a) return res.status(404).json({ error: '审批不存在' })
+  if (a.status !== 'pending') return res.status(409).json({ error: `审批已处理，当前状态：${a.status}` })
   const status = action === 'approve' ? 'approved' : 'rejected'
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-  db.prepare('UPDATE approvals SET status=?, key=COALESCE(?, key), action_by=?, action_at=?, comment=COALESCE(?, comment) WHERE id=?')
-    .run(status, key || null, req.user.name, now, comment || null, req.params.id)
-  // Offer 审批联动候选人 offer_status（批准/驳回）
-  if (a.type === 'offer' && a.ref_type === 'candidate') {
-    db.prepare("UPDATE candidates SET offer_status=? WHERE id=?").run(status === 'approved' ? 'approved' : 'rejected', a.ref_id)
-  }
+  inTransaction(() => {
+    const changed = db.prepare("UPDATE approvals SET status=?, key=COALESCE(?, key), action_by=?, action_at=?, comment=COALESCE(?, comment) WHERE id=? AND status='pending'")
+      .run(status, key || null, req.user.name, now, comment || null, req.params.id)
+    if (!changed.changes) throw Object.assign(new Error('审批已被处理'), { statusCode: 409 })
+    if (a.type === 'offer' && a.ref_type === 'candidate') db.prepare("UPDATE candidates SET offer_status=? WHERE id=?").run(status === 'approved' ? 'approved' : 'rejected', a.ref_id)
+    audit(req.user, action, 'approval', a.id, a, { ...a, status, comment: comment || a.comment })
+  })
   res.json({ ok: true, id: req.params.id, status })
 })
 
@@ -169,7 +250,7 @@ app.get('/api/payroll/:period', auth(['hr', 'founder']), (req, res) => {
     const emps = db.prepare('SELECT * FROM employees').all()
     rows = computeMonthFallback(period, emps).map(r => ({
       period: r.period, employee_id: r.employee_id, name: r.name, grade: r.grade, status: r.status,
-      base: r.base, perf: r.perf, ot: r.ot, social: r.social, fund: r.fund, supplemental_fund: r.supplemental_fund || 0, tax: r.tax, net: r.net, flags: JSON.stringify(r.flags), category: r.category
+      base: r.base, perf: r.perf, ot: r.ot, social: r.social, fund: r.fund, supplemental_fund: r.supplemental_fund || 0, severance: r.severance || 0, tax: r.tax, net: r.net, flags: JSON.stringify(r.flags), category: r.category
     }))
     fallback = true
   }
@@ -186,13 +267,30 @@ app.get('/api/payroll/:period', auth(['hr', 'founder']), (req, res) => {
     flags: JSON.parse(r.flags || '[]')
   }))
   const total = rows.reduce((s, r) => s + r.net, 0)
-  res.json({ period, rows: list, total: total.toLocaleString('zh-CN'), count: list.length, fallback })
+  const run = db.prepare('SELECT * FROM payroll_runs WHERE period=?').get(period) || null
+  res.json({ period, rows: list, total: total.toLocaleString('zh-CN'), count: list.length, fallback, run })
 })
-app.post('/api/payroll/:period/submit', auth(['hr']), (req, res) => res.json({ ok: true, period: req.params.period, status: 'submitted' }))
+app.post('/api/payroll/:period/submit', auth(['hr']), (req, res) => {
+  const period = req.params.period
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return res.status(400).json({ error: 'period 须为 YYYY-MM' })
+  if (!db.prepare('SELECT 1 FROM payroll WHERE period=? LIMIT 1').get(period)) return res.status(409).json({ error: '该月没有可提交的工资数据' })
+  const existing = db.prepare('SELECT * FROM payroll_runs WHERE period=?').get(period)
+  if (existing) return res.status(409).json({ error: `该月工资已由 ${existing.submitted_by} 提交` })
+  const now = new Date().toISOString()
+  inTransaction(() => {
+    db.prepare('INSERT INTO payroll_runs(period,status,submitted_by,submitted_at) VALUES(?,?,?,?)').run(period, 'submitted', req.user.name, now)
+    audit(req.user, 'submit', 'payroll_run', period, null, { period, status: 'submitted', submitted_at: now })
+  })
+  res.json({ ok: true, period, status: 'submitted', submitted_at: now })
+})
 
 // ── 申报导出：真实格式文件（个税扣缴/社保申报/银行代发）──
 function fmtCsv(rows) {
-  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const esc = v => {
+    let text = String(v ?? '')
+    if (/^[=+\-@]/.test(text)) text = "'" + text // 防止 Excel/表格软件公式注入
+    return `"${text.replace(/"/g, '""')}"`
+  }
   return '\uFEFF' + rows.map(r => r.map(esc).join(',')).join('\r\n') // BOM 便于 Excel 打开中文
 }
 app.get('/api/payroll/:period/export/:type', auth(['hr', 'founder']), (req, res) => {
@@ -203,8 +301,8 @@ app.get('/api/payroll/:period/export/:type', auth(['hr', 'founder']), (req, res)
   if (type === 'tax') {
     filename = `个税扣缴申报-${period}.csv`
     csv = fmtCsv([
-      ['姓名', '证件号码', '收入额', '基本减除费用', '专项扣除(社保公积金)', '专项附加扣除', '应纳税所得额', '适用税率', '速算扣除数', '应纳税额', '实发工资'],
-      ...rows.map(r => [r.name, r.name === '张三' ? '3101***********1234' : '3101***********5678', r.base + r.perf + r.ot, 5000, r.social + r.fund, 0, Math.max(0, r.base + r.perf + r.ot - 5000 - r.social - r.fund), '—', '—', r.tax, r.net])
+      ['姓名', '证件号码', '工资薪金收入额', '离职补偿（单独计税）', '基本减除费用', '专项扣除(社保公积金)', '专项附加扣除', '工资薪金应纳税所得额', '适用税率', '速算扣除数', '应纳税额', '实发工资'],
+      ...rows.map(r => [r.name, r.name === '张三' ? '3101***********1234' : '3101***********5678', r.base + r.perf + r.ot, r.severance || 0, 5000, r.social + r.fund, 0, Math.max(0, r.base + r.perf + r.ot - 5000 - r.social - r.fund), '—', '—', r.tax, r.net])
     ])
   } else if (type === 'social') {
     filename = `社保公积金申报-${period}.csv`
@@ -273,7 +371,7 @@ app.get('/api/dashboard/summary', auth(['hr', 'founder']), (req, res) => {
   })
 })
 app.get('/api/dashboard/trend', auth(['hr', 'founder']), (req, res) => {
-  const months = Number(req.query.months) || 6
+  const months = Math.min(36, Math.max(1, Number(req.query.months) || 6))
   const list = db.prepare('SELECT period, SUM(net) total, COUNT(*) c FROM payroll GROUP BY period ORDER BY period DESC LIMIT ?').all(months)
   res.json(list.reverse().map(r => ({ period: r.period, label: String(Number(r.period.slice(5))) + '月', value: Math.round(r.total / 10000 * 10) / 10, count: r.c })))
 })
@@ -372,24 +470,33 @@ setInterval(() => {
   const now = Date.now()
   for (const [sid, s] of sessions) if (now - s.updatedAt > SESSION_TTL) sessions.delete(sid)
 }, 10 * 60 * 1000).unref()
-function getSession(sid) {
+function sessionKey(userId, sid) { return `${userId}:${sid}` }
+function getSession(sid, userId) {
   if (!sid) return null
-  let s = sessions.get(sid)
-  if (!s) { s = { messages: [], updatedAt: Date.now() }; sessions.set(sid, s) }
+  const key = sessionKey(userId, sid)
+  let s = sessions.get(key)
+  if (!s) { s = { messages: [], updatedAt: Date.now() }; sessions.set(key, s) }
   s.updatedAt = Date.now()
   return s
 }
 app.post('/api/copilot/clear', auth(), (req, res) => {
   const sid = (req.body?.sessionId || '').trim()
-  if (sid) sessions.delete(sid)
+  if (sid) sessions.delete(sessionKey(req.user.id, sid))
   res.json({ ok: true })
 })
 
 app.post('/api/copilot/ask', auth(), async (req, res) => {
   const q = (req.body?.question || '').trim()
   if (!q) return res.status(400).json({ error: 'question 不能为空' })
-  const sid = (req.body?.sessionId || '').trim() || ('s-' + randomUUID())
-  const session = getSession(sid)
+  if (q.length > 4000) return res.status(400).json({ error: 'question 不得超过 4000 字' })
+  const requestedSid = String(req.body?.sessionId || '').trim()
+  if (requestedSid && !/^[A-Za-z0-9_-]{1,100}$/.test(requestedSid)) return res.status(400).json({ error: 'sessionId 不合法' })
+  if (sessions.size >= 1000 && !sessions.has(sessionKey(req.user.id, requestedSid))) {
+    const oldest = [...sessions.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt)[0]?.[0]
+    if (oldest) sessions.delete(oldest)
+  }
+  const sid = requestedSid || ('s-' + randomUUID())
+  const session = getSession(sid, req.user.id)
   session.messages.push({ role: 'user', content: q })
   if (session.messages.length > MAX_HISTORY * 2) session.messages.splice(0, session.messages.length - MAX_HISTORY * 2)
 
@@ -441,7 +548,8 @@ app.post('/api/option/simulate', auth(['hr', 'founder']), (req, res) => {
 app.use((err, req, res, next) => {
   console.error('[server error]', err?.message || err)
   if (res.headersSent) return next(err)
-  res.status(500).json({ error: '服务器内部错误' })
+  const status = err?.statusCode || (err?.name === 'MulterError' ? 400 : 500)
+  res.status(status).json({ error: status < 500 ? err.message : '服务器内部错误' })
 })
 process.on('unhandledRejection', reason => {
   console.error('[unhandledRejection]', reason?.message || reason)

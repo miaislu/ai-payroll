@@ -1,7 +1,7 @@
 // API 客户端：对接 payroll-backend（后端未启动时调用方自行回退到本地演示数据）
 const BASE = '/api'
-let token = localStorage.getItem('payroll_token') || ''
-export const setToken = t => { token = t; localStorage.setItem('payroll_token', t) }
+let token = sessionStorage.getItem('payroll_token') || ''
+export const setToken = t => { token = t; if (t) sessionStorage.setItem('payroll_token', t); else sessionStorage.removeItem('payroll_token') }
 export const getToken = () => token
 
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
@@ -13,7 +13,10 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
     },
     body: body ? JSON.stringify(body) : undefined
   })
-  if (!res.ok) throw new Error('API ' + res.status + ' ' + path)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(detail.error || ('API ' + res.status + ' ' + path))
+  }
   return res.json()
 }
 
@@ -82,10 +85,18 @@ export const uploadResume = (id, file) => {
     return r.json()
   })
 }
-export const parseResume = (id, rid) => api('/employees/' + id + '/resume/' + rid + '/parse', { method: 'POST', body: {} })
+export const parseResume = (id, rid, allowExternal = false) => api('/employees/' + id + '/resume/' + rid + '/parse', { method: 'POST', body: { allow_external: allowExternal } })
 export const applyResume = (id, rid) => api('/employees/' + id + '/resume/' + rid + '/apply', { method: 'POST', body: {} })
 export const deleteResume = (id, rid) => api('/employees/' + id + '/resume/' + rid, { method: 'DELETE' })
-export const resumeFileUrl = (id, rid) => BASE + '/employees/' + id + '/resume/' + rid + '/file'
+export const downloadAuthenticated = async (path, filename) => {
+  const res = await fetch(BASE + path, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+  if (!res.ok) throw new Error('下载失败 ' + res.status)
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url; a.download = filename || 'download'; document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+export const downloadResume = (id, rid, filename) => downloadAuthenticated('/employees/' + id + '/resume/' + rid + '/file', filename)
 
 // ── v2：招聘管理 ──
 export const getRequisitions = () => api('/recruiting/requisitions')
@@ -126,9 +137,9 @@ export const uploadCandidateResume = (id, file) => {
     return r.json()
   })
 }
-export const parseCandidateResume = id => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: {} })
+export const parseCandidateResume = (id, allowExternal = false) => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: { allow_external: allowExternal } })
 export const deleteCandidateResume = id => api('/recruiting/candidates/' + id + '/resume', { method: 'DELETE' })
-export const candidateResumeUrl = id => BASE + '/recruiting/candidates/' + id + '/resume'
+export const downloadCandidateResume = (id, filename) => downloadAuthenticated('/recruiting/candidates/' + id + '/resume', filename)
 
 // ── v2：薪酬成本管理 ──
 export const getCostSummary = period => api('/cost/summary' + (period ? '?period=' + period : ''))

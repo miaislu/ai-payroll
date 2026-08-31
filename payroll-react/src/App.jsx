@@ -109,7 +109,8 @@ export default function App() {
   const openProfile = id => { setEmpId(id); setPage('employee-profile'); window.scrollTo({ top: 0 }) }
   const act = async (id, status, newKey, comment) => {
     if (backendUp) {
-      try { await approvalAction(id, status === 'approved' ? 'approve' : 'reject', newKey, comment); setApprovals(await getApprovals()); return } catch { /* 落本地 */ }
+      try { await approvalAction(id, status === 'approved' ? 'approve' : 'reject', newKey, comment); setApprovals(await getApprovals()); return }
+      catch (error) { showToast('审批失败：' + error.message); return }
     }
     setApprovals(list => list.map(a => (a.id === id ? { ...a, status, key: newKey || a.key } : a)))
   }

@@ -40,6 +40,11 @@ equity.get('/pool', (req, res) => {
 
 equity.put('/pool', (req, res) => {
   const b = req.body || {}
+  if (b.pool_percent !== undefined && (!Number.isFinite(Number(b.pool_percent)) || Number(b.pool_percent) < 0 || Number(b.pool_percent) > 100)) return res.status(400).json({ error: '期权池比例须在 0-100 之间' })
+  if (b.total_shares !== undefined && (!Number.isFinite(Number(b.total_shares)) || Number(b.total_shares) <= 0)) return res.status(400).json({ error: '总股数须 >0' })
+  if (b.valuation_wan !== undefined && (!Number.isFinite(Number(b.valuation_wan)) || Number(b.valuation_wan) < 0)) return res.status(400).json({ error: '估值不得为负数' })
+  const granted = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE status IN ('granted','vested','exercised')").get().s
+  if (b.total_shares !== undefined && Number(b.total_shares) < granted) return res.status(409).json({ error: `总股数不能低于已授予 ${granted}` })
   const r = db.prepare('UPDATE option_pool SET pool_percent=COALESCE(?,pool_percent), total_shares=COALESCE(?,total_shares), valuation_wan=COALESCE(?,valuation_wan), updated_at=? WHERE id=1')
     .run(b.pool_percent ?? null, b.total_shares ?? null, b.valuation_wan ?? null, new Date().toISOString().slice(0, 10))
   if (!r.changes) {
@@ -66,9 +71,15 @@ equity.post('/grants', (req, res) => {
   if (!emp) return res.status(400).json({ error: '员工不存在' })
   if (Number(b.share_count) <= 0) return res.status(400).json({ error: '授予股数须 >0' })
   if (Number(b.fair_value) < Number(b.exercise_price)) return res.status(400).json({ error: '公允价须 ≥ 行权价' })
+  if (b.status && !GRANT_STATUS.includes(b.status)) return res.status(400).json({ error: '授予状态不合法' })
   const c = calcGrant(b)
+  const cliff = Number(b.cliff_months) || 12
+  if (c.vesting < 1 || c.vesting > 120 || cliff < 0 || cliff > c.vesting) return res.status(400).json({ error: '归属期须为 1-120 月，cliff 不得超过归属期' })
+  const pool = db.prepare('SELECT total_shares FROM option_pool WHERE id=1').get()
+  const granted = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE status IN ('granted','vested','exercised')").get().s
+  if (pool && granted + c.share > pool.total_shares) return res.status(409).json({ error: '授予股数超过期权池剩余额度' })
   const r = db.prepare('INSERT INTO option_grants(employee_id,grant_date,share_count,exercise_price,fair_value,vesting_months,cliff_months,total_value,monthly_amort,status,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-    .run(b.employee_id, b.grant_date || new Date().toISOString().slice(0, 10), c.share, c.exercise, c.fair, c.vesting, Number(b.cliff_months) || 12, c.total_value, c.monthly_amort, b.status || 'granted', b.note || '')
+    .run(b.employee_id, b.grant_date || new Date().toISOString().slice(0, 10), c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || 'granted', b.note || '')
   res.json({ ok: true, id: r.lastInsertRowid, total_value: c.total_value, monthly_amort: c.monthly_amort })
 })
 
@@ -81,8 +92,16 @@ equity.put('/grants/:id', (req, res) => {
     fair_value: b.fair_value ?? cur.fair_value, vesting_months: b.vesting_months ?? cur.vesting_months
   }
   const c = calcGrant(merged)
+  const cliff = b.cliff_months ?? cur.cliff_months
+  if (c.share <= 0 || c.fair < c.exercise) return res.status(400).json({ error: '授予股数须 >0，公允价须 ≥ 行权价' })
+  if (c.vesting < 1 || c.vesting > 120 || Number(cliff) < 0 || Number(cliff) > c.vesting) return res.status(400).json({ error: '归属期须为 1-120 月，cliff 不得超过归属期' })
+  if (b.status && !GRANT_STATUS.includes(b.status)) return res.status(400).json({ error: '授予状态不合法' })
+  const pool = db.prepare('SELECT total_shares FROM option_pool WHERE id=1').get()
+  const grantedOther = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE id<>? AND status IN ('granted','vested','exercised')").get(req.params.id).s
+  const nextStatus = b.status || cur.status
+  if (pool && ['granted', 'vested', 'exercised'].includes(nextStatus) && grantedOther + c.share > pool.total_shares) return res.status(409).json({ error: '授予股数超过期权池剩余额度' })
   const r = db.prepare('UPDATE option_grants SET share_count=?, exercise_price=?, fair_value=?, vesting_months=?, cliff_months=COALESCE(?,cliff_months), total_value=?, monthly_amort=?, status=COALESCE(?,status), note=COALESCE(?,note), grant_date=COALESCE(?,grant_date) WHERE id=?')
-    .run(c.share, c.exercise, c.fair, c.vesting, b.cliff_months ?? null, c.total_value, c.monthly_amort, b.status || null, b.note || null, b.grant_date || null, req.params.id)
+    .run(c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || null, b.note || null, b.grant_date || null, req.params.id)
   res.json({ ok: true, id: Number(req.params.id), total_value: c.total_value, monthly_amort: c.monthly_amort })
 })
 

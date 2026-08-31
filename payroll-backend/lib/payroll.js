@@ -43,45 +43,38 @@ export function socialFund(base, city = '上海', supplementalRate = 0) {
 }
 
 // 离职经济补偿：当地上年社平工资 3 倍以内免税，超出部分按年度税率表单独计税
-const LOCAL_AVG_WAGE = { 上海: 12434, 北京: 15701, 深圳: 14553, 合肥: 9203 } // 元/月（2024 口径，MVP 种子）
+const LOCAL_AVG_MONTHLY_WAGE = { 上海: 12434, 北京: 15701, 深圳: 14553, 合肥: 9203 } // 元/月（2024 口径，需按年更新）
 export function severanceTax(severance, city = '上海') {
-  const exempt = (LOCAL_AVG_WAGE[city] || 10000) * 3
+  // 财税〔2018〕164号：当地上年职工平均工资 3 倍以内免税；这里的“平均工资”为年平均工资。
+  const exempt = (LOCAL_AVG_MONTHLY_WAGE[city] || 10000) * 12 * 3
   const excess = Math.max(0, severance - exempt)
   return taxAnnual(excess)
 }
 
-// 劳务报酬预扣（顾问/实习生统一口径）：减 20%（>4000）或 800（≤4000）后 ×20% 预扣率
-// 注：统一 20% 预扣，不做三级超额累进；年度汇算补退税由个人自行办理
+// 居民个人劳务报酬预扣：减 20%（>4000）或 800（≤4000）后，适用 20%/30%/40% 三级预扣率。
 export function consultantTax(amount) {
   if (amount <= 0) return 0
   const taxable = amount > 4000 ? amount * 0.8 : Math.max(0, amount - 800)
-  return Math.round(taxable * 0.20)
+  if (taxable <= 20000) return Math.round(taxable * 0.20)
+  if (taxable <= 50000) return Math.round(taxable * 0.30 - 2000)
+  return Math.round(taxable * 0.40 - 7000)
 }
 
 // 员工在某月的基本要素（不含累计税；顾问/实习生按各自口径）
 function monthlyParts(e, period) {
   const type = e.employment_type || 'employee'
   const base = e.monthly_base
-  if (e.status === 'departed') {
-    const severance = Math.round(base * 2 + base * 5 / 21.75) // 当月工资 + N+1 + 年假折算
-    const { social, fund, supplemental_fund } = socialFund(base, e.city, e.supplemental_fund_rate)
-    const tax = severanceTax(severance, e.city)
-    const net = severance - social - fund - supplemental_fund - tax
-    return {
-      employee_id: e.id, name: e.name, grade: e.grade, status: 'departed', period, city: e.city,
-      base, perf: 0, ot: 0, social, fund, supplemental_fund, tax, net, employment_type: type,
-      flags: [{ kind: 'warn', text: '离职结算', detail: `按 N+1 结算（当月工资 ${base.toLocaleString('zh-CN')} + 补偿 + 年假折算），补偿金 3 倍社平内免税，个税已按此口径计算。` }]
-    }
-  }
+  const departing = Boolean(e.leave_month && e.leave_month === period)
+  const severance = departing ? Math.max(0, Number(e.severance_amount) || 0) : 0
   // 顾问：劳务报酬，按月独立预扣 20%，不缴社保公积金，无绩效/加班
   if (type === 'consultant') {
     const amount = base
     const tax = consultantTax(amount)
     const net = amount - tax
     return {
-      employee_id: e.id, name: e.name, grade: e.grade, status: 'active', period, city: e.city,
+      employee_id: e.id, name: e.name, grade: e.grade, status: departing ? 'departed' : 'active', period, city: e.city,
       base: amount, perf: 0, ot: 0, gross: amount, social: 0, fund: 0, supplemental_fund: 0, special: 0, tax, net,
-      employment_type: 'consultant',
+      severance: 0, employment_type: 'consultant',
       flags: [{ kind: 'info', text: '顾问 · 劳务报酬', detail: '按劳务报酬统一预扣 20%（减 20% 或 800 后 ×20%），不缴社保公积金；年度汇算补退税由个人自行办理。' }]
     }
   }
@@ -93,13 +86,14 @@ function monthlyParts(e, period) {
   const special = e.special_deduction || 0
   const net = gross - social - fund - supplemental_fund // 税在累计环节追加
   const flags = []
+  if (departing) flags.push({ kind: 'warn', text: '离职结算', detail: severance ? `离职补偿 ${severance.toLocaleString('zh-CN')} 元按显式录入金额单独计税。` : '未录入离职补偿金额，本月仅计算正常工资。' })
   if (isIntern) flags.push({ kind: 'info', text: '实习生 · 工资薪金', detail: '在校生实习按工资薪金累计预扣（每月 5000 减除 + 专项附加），不缴社保公积金。' })
   if (e.supplemental_fund_rate > 0) flags.push({ kind: 'info', text: '含补充公积金', detail: `补充公积金个人缴纳 ${(e.supplemental_fund_rate * 100).toFixed(0)}%（与基本公积金一并作为个税专项扣除）。` })
   if (e.flag === '社保基数调整') flags.push({ kind: 'warn', text: '社保基数调整 ▸', detail: '本月社保基数按当年新基数调整，个人部分变化已按政策校验。' })
   if (e.flag === '转正生效') flags.push({ kind: 'ok', text: '转正生效' })
   if (e.flag === '加班费存疑') flags.push({ kind: 'bad', text: '加班费存疑 ▸', detail: '⚠️ 合规预检：休息日加班应为 2 倍，当前按 1.5 倍计算。来源：《劳动法》第 44 条。已阻断确认，请 HR 处理。' })
   if (e.flag === '留才预警') flags.push({ kind: 'warn', text: '留才预警' })
-  return { employee_id: e.id, name: e.name, grade: e.grade, status: 'active', period, city: e.city, base, perf, ot, gross, social, fund, supplemental_fund, special, flags, employment_type: type }
+  return { employee_id: e.id, name: e.name, grade: e.grade, status: departing ? 'departed' : 'active', period, city: e.city, base, perf, ot, gross, severance, social, fund, supplemental_fund, special, flags, employment_type: type }
 }
 
 // 累计预扣法：按月顺序处理，逐员工维护累计状态
@@ -112,9 +106,10 @@ export function computeCumulative(periods, employees) {
       const hired = (e.hire_month || '2025-01').split('-').map(Number)
       const hiredBefore = hired[0] < y || (hired[0] === y && hired[1] <= m)
       if (!hiredBefore) continue
-      if (e.status === 'departed' && e.leave_month !== period) continue
+      const leftBefore = e.leave_month && e.leave_month < period
+      if (leftBefore) continue
       const parts = monthlyParts(e, period)
-      if (parts.status === 'departed' || parts.employment_type === 'consultant') { allRows.push(parts); continue } // 离职结算/顾问劳务报酬 独立计税，不累计
+      if (parts.employment_type === 'consultant') { allRows.push(parts); continue } // 顾问劳务报酬独立计税，不累计
       // 累计预扣
       const st = state.get(e.id) || { cumIncome: 0, cumDeduct: 0, cumSpecial: 0, withheld: 0, months: 0 }
       st.cumIncome += parts.gross
@@ -126,7 +121,9 @@ export function computeCumulative(periods, employees) {
       const monthTax = cumTax - st.withheld
       st.withheld = cumTax
       state.set(e.id, st)
-      allRows.push({ ...parts, tax: Math.max(0, monthTax), net: parts.gross - parts.social - parts.fund - (parts.supplemental_fund || 0) - monthTax })
+      const separateSeveranceTax = severanceTax(parts.severance || 0, e.city)
+      const tax = Math.max(0, monthTax) + separateSeveranceTax
+      allRows.push({ ...parts, tax, net: parts.gross + (parts.severance || 0) - parts.social - parts.fund - (parts.supplemental_fund || 0) - tax })
     }
   }
   return allRows

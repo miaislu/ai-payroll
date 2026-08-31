@@ -2,7 +2,7 @@
 // 另导出 bandOf / bandPosition 供招聘 Offer 建议引用对标带宽
 import { Router } from 'express'
 import { db } from '../db.js'
-import { companyCostForPeriod } from '../lib/company_cost.js'
+import { companyCostForPeriod, grantActiveInPeriod } from '../lib/company_cost.js'
 
 export const cost = Router()
 
@@ -31,7 +31,7 @@ function prevPeriod(period) {
 // 某期间公司成本明细（按员工聚合，含部门 + 期权台账摊销）
 function costRows(period) {
   const employees = db.prepare('SELECT e.*, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id=d.id').all()
-  const grants = db.prepare("SELECT * FROM option_grants WHERE status='granted'").all()
+  const grants = db.prepare("SELECT * FROM option_grants WHERE status='granted'").all().filter(g => grantActiveInPeriod(g, period))
   const grantsMap = {}
   for (const g of grants) (grantsMap[g.employee_id] = grantsMap[g.employee_id] || []).push(g)
   return companyCostForPeriod(period, employees, grantsMap)
@@ -92,7 +92,7 @@ cost.get('/summary', (req, res) => {
 
 // ── 成本趋势（近 N 月）──
 cost.get('/trend', (req, res) => {
-  const months = Number(req.query.months) || 6
+  const months = Math.min(36, Math.max(1, Number(req.query.months) || 6))
   const periods = []
   let [y, m] = '2025-06'.split('-').map(Number)
   for (let i = 0; i < months; i++) { periods.unshift(`${y}-${String(m).padStart(2, '0')}`); m--; if (m === 0) { m = 12; y-- } }
@@ -145,8 +145,9 @@ cost.get('/budget', (req, res) => {
 
 // ── 成本预测：编制计划 × 部门人均成本 → 未来 N 月 ──
 cost.get('/forecast', (req, res) => {
-  const months = Number(req.query.months) || 6
+  const months = Math.min(36, Math.max(1, Number(req.query.months) || 6))
   const startPeriod = req.query.start || '2025-07'
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(startPeriod)) return res.status(400).json({ error: 'start 须为 YYYY-MM' })
   const depts = db.prepare('SELECT id, name, parent_id FROM departments').all()
   // 顶层部门（预测按顶层口径聚合，避免父子部门重复计）
   const topOf = id => { let cur = depts.find(d => d.id === id); while (cur && cur.parent_id) cur = depts.find(d => d.id === cur.parent_id); return cur ? cur.id : id }
@@ -170,11 +171,11 @@ cost.get('/forecast', (req, res) => {
   }
   // 招聘需求联动：进行中（open/interview）需求按预计到岗月自动计入编制
   const reqs = db.prepare("SELECT department_id, headcount, target_month FROM job_requisitions WHERE status IN ('open','interview') AND target_month IS NOT NULL").all()
-  const reqByMonth = {}
+  const reqsByTop = {}
   for (const r of reqs) {
     const t = topOf(r.department_id)
-    reqByMonth[r.target_month] = reqByMonth[r.target_month] || {}
-    reqByMonth[r.target_month][t] = (reqByMonth[r.target_month][t] || 0) + r.headcount
+    reqsByTop[t] = reqsByTop[t] || []
+    reqsByTop[t].push({ target_month: r.target_month, headcount: Number(r.headcount) || 0 })
   }
   const curCountByTop = {}
   for (const r of cur) { const t = topOf(r.department_id); curCountByTop[t] = (curCountByTop[t] || 0) + 1 }
@@ -184,18 +185,18 @@ cost.get('/forecast', (req, res) => {
   for (let i = 0; i < months; i++) { periods.push(`${y}-${String(m).padStart(2, '0')}`); m++; if (m === 13) { m = 1; y++ } }
   const series = periods.map(p => {
     const mm = manualByMonth[p] || {}
-    const qm = reqByMonth[p] || {}
     let total = 0, planned = 0, plannedManual = 0, plannedRequisition = 0, detail = []
     for (const t of tops) {
-      const manual = mm[t.id] ?? 0
-      const req = qm[t.id] ?? 0
-      const hasPlan = mm[t.id] !== undefined || qm[t.id] !== undefined
-      const count = hasPlan ? manual + req : (curCountByTop[t.id] ?? 0)
+      const hasManual = mm[t.id] !== undefined
+      const manual = hasManual ? mm[t.id] : 0
+      const req = (reqsByTop[t.id] || []).filter(x => x.target_month <= p).reduce((s, x) => s + x.headcount, 0)
+      // 手工编制是该月权威总人数；没有手工编制时，当前人数加截至该月预计入职人数。
+      const count = hasManual ? manual : (curCountByTop[t.id] ?? 0) + req
       if (!count) continue
       const avg = avgMap[t.id] || topAvg
       total += count * avg; planned += count
-      plannedManual += manual; plannedRequisition += req
-      const source = hasPlan ? (manual && req ? 'both' : manual ? 'manual' : 'requisition') : 'current'
+      plannedManual += manual; plannedRequisition += hasManual ? 0 : req
+      const source = hasManual ? 'manual' : req ? 'requisition' : 'current'
       detail.push({ department_id: t.id, name: t.name, count, manual, req, avg, amount: count * avg, source })
     }
     return { period: p, label: p.slice(5).replace('-', '月') + '月', total: Math.round(total), planned, plannedManual, plannedRequisition, detail, currentPlanned: cur.length }

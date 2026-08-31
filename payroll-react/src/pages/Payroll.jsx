@@ -23,9 +23,12 @@ export default function Payroll({ toast, backendUp }) {
     ;(async () => {
       try {
         const d = await getPayroll(month)
-        if (alive) { setRows(d.rows); setSubmitted(false) }
+        if (alive) { setRows(d.rows); setSubmitted(Boolean(d.run)) }
       } catch {
-        if (alive) { setRows(LOCAL_ROWS); setSubmitted(false) }
+        if (alive) {
+          setRows(backendUp ? [] : LOCAL_ROWS); setSubmitted(false)
+          if (backendUp) toast('工资数据加载失败')
+        }
       } finally { if (alive) setLoading(false) }
     })()
     return () => { alive = false }
@@ -37,7 +40,7 @@ export default function Payroll({ toast, backendUp }) {
   const download = async type => {
     const names = { tax: '个税扣缴申报', social: '社保公积金申报', bank: '银行代发' }
     try {
-      const res = await fetch(`/api/payroll/${month}/export/${type}`, { headers: { Authorization: 'Bearer ' + (localStorage.getItem('payroll_token') || '') } })
+      const res = await fetch(`/api/payroll/${month}/export/${type}`, { headers: { Authorization: 'Bearer ' + (sessionStorage.getItem('payroll_token') || '') } })
       if (!res.ok) throw new Error()
       const blob = await res.blob()
       const a = document.createElement('a')
@@ -50,7 +53,8 @@ export default function Payroll({ toast, backendUp }) {
   }
   const submit = async () => {
     if (backendUp) {
-      try { await submitPayroll(month); setSubmitted(true); toast('已提交财务复核（后端持久化）'); return } catch { /* 落本地 */ }
+      try { await submitPayroll(month); setSubmitted(true); toast('已提交财务复核（后端持久化）'); return }
+      catch (error) { toast('提交失败：' + error.message); return }
     }
     setSubmitted(true)
     toast('已提交财务复核（本地演示）')

@@ -6,22 +6,24 @@ import path from 'node:path'
 import { mkdirSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { extractText, parseResume, RESUME_APPLY_MAP } from '../lib/resume_parser.js'
+import { randomUUID } from 'node:crypto'
+import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
 
 export const employee = Router()
 
 // 简历上传目录（payroll-backend/uploads/resumes）
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'resumes')
-mkdirSync(UPLOAD_DIR, { recursive: true })
+mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o700 })
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOAD_DIR),
     filename: (req, file, cb) => {
-      const safe = (file.originalname || 'resume').replace(/[^\w.\u4e00-\u9fa5-]/g, '_')
-      cb(null, `emp${req.params.id}-${Date.now()}-${safe}`)
+      cb(null, `${randomUUID()}${path.extname(file.originalname || '').toLowerCase()}`)
     }
   }),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: resumeFileFilter
 })
 
 // 档案字段白名单（防止任意列注入）
@@ -140,8 +142,15 @@ employee.delete('/family/:fid', (req, res) => {
 
 // ── 简历附件与 AI 解析 ──
 // 上传简历（multipart 字段 resume）
-employee.post('/:id/resume', upload.single('resume'), (req, res) => {
+employee.post('/:id/resume', (req, res, next) => {
+  if (!db.prepare('SELECT id FROM employees WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '员工不存在' })
+  next()
+}, upload.single('resume'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: '缺少简历文件（字段名 resume）' })
+  if (!validateResumeFile(req.file)) {
+    try { rmSync(req.file.path, { force: true }) } catch { /* ignore */ }
+    return res.status(400).json({ error: '文件内容与扩展名不匹配' })
+  }
   const r = db.prepare('INSERT INTO employee_resumes(employee_id,filename,original_name,content_type,size,file_path,uploaded_at,parse_status) VALUES(?,?,?,?,?,?,?,?)')
     .run(req.params.id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.file.path, new Date().toISOString().slice(0, 19).replace('T', ' '), 'pending')
   res.json({ ok: true, id: r.lastInsertRowid, filename: req.file.originalname })
@@ -175,7 +184,7 @@ employee.post('/:id/resume/:rid/parse', async (req, res) => {
   const { text, engine, unsupported, error } = await extractText(row.file_path, row.content_type, row.original_name)
   if (unsupported) return res.status(400).json({ error: '暂不支持该文件类型解析（支持 txt/md/docx/pdf）' })
   if (!text.trim()) return res.status(400).json({ error: '未能从文件中提取文本' + (error ? '：' + error : '') })
-  const parsed = await parseResume(text)
+  const parsed = await parseResume(text, { allowExternal: req.body?.allow_external === true })
   db.prepare("UPDATE employee_resumes SET parse_status='parsed', parse_engine=?, parsed_data=?, text_preview=? WHERE id=?")
     .run(engine ? parsed.engine + '+extract(' + engine + ')' : parsed.engine, JSON.stringify(parsed), text.slice(0, 500), req.params.rid)
   res.json({ ok: true, id: req.params.rid, engine: parsed.engine, parsed, text_preview: text.slice(0, 300) })

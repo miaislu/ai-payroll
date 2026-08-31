@@ -12,7 +12,8 @@
   S6 稀缺性排序  稀缺系数与方向家族预期排序一致（EDA>模拟>工艺>数字前端>版图/测试）
 输出: markdown 验证报告（每项 pass/warn/fail + 汇总分）
 """
-import json, re, sys, datetime
+import json, re, sys, datetime, urllib.request, urllib.error
+from pathlib import Path
 
 # 目标方向清单（对齐附录 C 岗位体系）
 TARGET_DIRECTIONS = [
@@ -35,6 +36,7 @@ RARITY_ORDER = ["版图设计工程师", "芯片测试工程师", "芯片固件/
                 "工艺工程师", "模拟IC设计工程师", "EDA研发工程师"]
 STRENGTH_MIN_SOURCES = {"强": 3, "中": 2, "弱": 1}
 URL_RE = re.compile(r'^https?://\S+$')
+NUMERIC_ANCHOR_RE = re.compile(r'\d+(?:\.\d+)?\s*(?:万|k|K|元|薪|%)')
 
 def check_entry(e, report, i):
     ok = True
@@ -64,11 +66,33 @@ def check_entry(e, report, i):
     for s in e["sources"]:
         if not URL_RE.match(s.get("url", "")):
             report.append(f"  - [{i}] S4 FAIL 非法 URL: {s.get('url')}"); ok = False
+        if not s.get("title") or not s.get("type") or not isinstance(s.get("year"), int):
+            report.append(f"  - [{i}] S4 WARN {e['direction']} 来源缺少 title/type/year 元数据")
+    anchored = sum(1 for s in e["sources"] if NUMERIC_ANCHOR_RE.search(s.get("title", "")))
+    if anchored == 0:
+        report.append(f"  - [{i}] S4 WARN {e['direction']} 没有来源标题包含可复核的薪酬数字锚点")
     return ok
 
+def check_urls(entries, report):
+    report.append("## 四、来源可访问性抽查（联网）")
+    for e in entries:
+        for source in e.get("sources", []):
+            url = source.get("url", "")
+            try:
+                req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "ai-payroll-validator/1.0"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    if resp.status >= 400:
+                        report.append(f"- S7 WARN HTTP {resp.status}: {url}")
+            except Exception as exc:
+                report.append(f"- S7 WARN 无法访问: {url} ({type(exc).__name__})")
+    report.append("")
+
 def main():
-    ds_path = sys.argv[1] if len(sys.argv) > 1 else "benchmark-dataset.json"
-    out_path = sys.argv[2] if len(sys.argv) > 2 else "validation-report.md"
+    base = Path(__file__).resolve().parent
+    positional = [x for x in sys.argv[1:] if not x.startswith("--")]
+    ds_path = Path(positional[0]) if positional else base / "benchmark-dataset.json"
+    out_path = Path(positional[1]) if len(positional) > 1 else base / "validation-report.md"
+    check_remote = "--check-urls" in sys.argv
     with open(ds_path, encoding="utf-8") as f:
         data = json.load(f)
     report = [f"# 对标数据质量验证报告", "",
@@ -102,10 +126,11 @@ def main():
         report.append(f"  - {d}: 稀缺系数 {rf} [{flag}]")
         prev = rf or 1
     report.append("")
-    report.append("## 四、汇总")
-    passed = sum(1 for line in report if "FAIL" not in line)
+    if check_remote:
+        check_urls(entries, report)
+    report.append(f"## {'五' if check_remote else '四'}、汇总")
     report.append(f"- 数据记录: {len(entries)} 条  ·  失败项: {fail}  ·  警告项: {sum(1 for l in report if 'WARN' in l)}")
-    report.append(f"- 结论: {'✅ 数据质量达标，可进入对标库' if fail == 0 else '❌ 存在失败项，需修正后入库'}")
+    report.append(f"- 结论: {'✅ 结构与区间检查通过；入库前仍须人工核验来源内容、样本口径和数值推导' if fail == 0 else '❌ 存在失败项，需修正后入库'}")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(report))
     print(f"报告已生成: {out_path}")

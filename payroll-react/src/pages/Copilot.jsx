@@ -14,12 +14,12 @@ export default function Copilot({ toast, backendUp }) {
   const newSession = () => {
     sessionId.current = 's-' + Date.now() + '-' + Math.random().toString(36).slice(2)
     setMsgs([{ role: 'ai', text: '已开启新会话。可以继续问我薪酬/政策问题（多轮记忆已清空）。' }])
-    if (backendUp) fetch('/api/copilot/clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('payroll_token') || '') }, body: JSON.stringify({ sessionId: sessionId.current }) }).catch(() => {})
+    if (backendUp) fetch('/api/copilot/clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (sessionStorage.getItem('payroll_token') || '') }, body: JSON.stringify({ sessionId: sessionId.current }) }).catch(() => {})
   }
 
   useEffect(() => {
     if (!backendUp) return
-    fetch('/api/copilot/config', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('payroll_token') || '') } })
+    fetch('/api/copilot/config', { headers: { Authorization: 'Bearer ' + (sessionStorage.getItem('payroll_token') || '') } })
       .then(r => r.ok ? r.json() : null)
       .then(c => c && setEngine(c.engine === 'llm' ? 'llm' : 'kb'))
       .catch(() => {})

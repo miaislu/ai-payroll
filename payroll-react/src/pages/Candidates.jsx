@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
-import { getCandidatesKanban, getRequisitions, createCandidate, setCandidateStage, updateCandidate, getOfferSuggest, getInterviews, createInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, deleteCandidateResume, candidateResumeUrl } from '../api.js'
+import { getCandidatesKanban, getRequisitions, createCandidate, setCandidateStage, updateCandidate, getOfferSuggest, getInterviews, createInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, deleteCandidateResume, downloadCandidateResume } from '../api.js'
 import { CANDIDATE_STAGES } from '../data.js'
 
 const EMPTY = { name: '', phone: '', email: '', source_channel: '内推', requisition_id: null, stage: 'new', expected_salary: 30000, apply_date: '' }
@@ -79,8 +79,11 @@ export default function Candidates({ toast, backendUp, goto }) {
     if (!amount) return
     try {
       await updateCandidate(detail.id, { offer_amount: +amount, offer_date: new Date().toISOString().slice(0, 10) })
-      toast('Offer 金额已更新')
-      load(); openDetail({ ...detail, offer_amount: +amount, offer_date: new Date().toISOString().slice(0, 10) })
+      toast('Offer 金额已更新；原审批如有已自动失效')
+      const fresh = await getCandidatesKanban()
+      setKanban(fresh)
+      const updated = fresh.flatMap(g => g.items).find(x => x.id === detail.id)
+      if (updated) openDetail(updated)
     } catch { toast('更新失败') }
   }
 
@@ -112,9 +115,10 @@ export default function Candidates({ toast, backendUp, goto }) {
   }
   const doParseResume = async () => {
     if (!detail) return
+    const allowExternal = confirm('是否允许将脱敏后的简历正文发送给已配置的外部 AI？\n选择“取消”将仅使用本地规则解析。')
     setResumeParsing(true)
     try {
-      const r = await parseCandidateResume(detail.id)
+      const r = await parseCandidateResume(detail.id, allowExternal)
       setResumePreview(r.parsed)
       toast(`解析完成（${r.engine}）· 岗位族「${r.parsed.job_family || '未知'}」${r.parsed.experience_years ? '· ' + r.parsed.experience_years + ' 年经验' : ''}`)
       const fresh = await getCandidatesKanban()
@@ -170,8 +174,8 @@ export default function Candidates({ toast, backendUp, goto }) {
                     {c.eval_score && <Chip kind="info">评分 {c.eval_score}</Chip>}
                     {c.skills && <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>{c.skills.split(',').slice(0, 3).filter(Boolean).map(s => <span key={s} className="chip gray" style={{ fontSize: 10, padding: '1px 6px' }}>{s.trim()}</span>)}</div>}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                      <Btn sm onClick={e => { e.stopPropagation(); move(c, -1) }}>◀</Btn>
-                      <Btn sm onClick={e => { e.stopPropagation(); move(c, 1) }}>▶</Btn>
+                      {['screening', 'interview', 'offer'].includes(c.stage) && <Btn sm onClick={e => { e.stopPropagation(); move(c, -1) }}>◀</Btn>}
+                      {['new', 'screening', 'interview'].includes(c.stage) && <Btn sm onClick={e => { e.stopPropagation(); move(c, 1) }}>▶</Btn>}
                     </div>
                   </div>
                 ))}
@@ -249,7 +253,7 @@ export default function Candidates({ toast, backendUp, goto }) {
                 <input ref={resumeRef} type="file" accept=".txt,.md,.text,.docx,.pdf" style={{ display: 'none' }} onChange={onResumePick} />
                 <Btn sm onClick={() => resumeRef.current?.click()}>上传</Btn>
                 {detail.resume_name && <Btn sm disabled={resumeParsing} onClick={doParseResume}>{resumeParsing ? '解析中…' : '🤖 AI 解析'}</Btn>}
-                {detail.resume_name && <a className="btn sm" style={{ textDecoration: 'none' }} href={candidateResumeUrl(detail.id)} target="_blank" rel="noreferrer">下载</a>}
+                {detail.resume_name && <Btn sm onClick={() => downloadCandidateResume(detail.id, detail.resume_name).catch(() => toast('下载失败'))}>下载</Btn>}
                 {detail.resume_name && <Btn sm onClick={doDeleteResume}>删除</Btn>}
               </div>
               {detail.skills && (
@@ -297,7 +301,7 @@ export default function Candidates({ toast, backendUp, goto }) {
                     : detail.offer_status === 'rejected'
                       ? <Chip kind="bad">Offer 已驳回</Chip>
                       : <Btn onClick={doOfferApproval}>📋 发起 Offer 审批</Btn>}
-                  <Btn primary style={{ background: '#10b981', borderColor: '#10b981' }} onClick={doOnboard}>🚀 办理入职（生成员工档案）</Btn>
+                  {detail.offer_status === 'approved' && <Btn primary style={{ background: '#10b981', borderColor: '#10b981' }} onClick={doOnboard}>🚀 办理入职（生成员工档案）</Btn>}
                 </>
               )}
               {detail.stage === 'hired' && <Btn primary onClick={() => goto('employees')}>已入职 · 查看员工档案 →</Btn>}

@@ -3,7 +3,7 @@ import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getDepartments, getEmployeeEvents, createEmployeeEvent, deleteEmployeeEvent } from '../api.js'
 import { DIRECTIONS, CITIES } from '../data.js'
 
-const GRADES = ['P4', 'P5', 'P6', 'M1']
+const GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
 const SUPPORT_FAMILIES = ['财务', '人力资源', '行政', '市场', '法务', '采购', '质量体系']
 const MGMT_FAMILIES = ['工程管理', '研发管理', '职能管理']
 const JOB_FAMILIES = [...Object.keys(DIRECTIONS), ...SUPPORT_FAMILIES, ...MGMT_FAMILIES]
@@ -14,7 +14,7 @@ const EVENT_TYPES = [
   { key: 'promotion', label: '晋升' }, { key: 'transfer', label: '调动' },
   { key: 'offboard', label: '离职' }
 ]
-const EMPTY = { name: '', grade: 'P4', job_family: '模拟IC设计', city: '上海', monthly_base: 20000, perf_ratio: 0.3, special_deduction: 0, hire_month: '2025-06', department_id: null, category: 'tech', status: 'active', employment_type: 'employee', supplemental_fund_rate: 0 }
+const EMPTY = { name: '', grade: 'P4', job_family: '模拟IC设计', city: '上海', monthly_base: 20000, perf_ratio: 0.3, special_deduction: 0, hire_month: '2025-06', leave_month: '', severance_amount: 0, department_id: null, category: 'tech', status: 'active', employment_type: 'employee', supplemental_fund_rate: 0 }
 const EV_EMPTY = { type: 'onboard', event_date: '', from_value: '', to_value: '', note: '' }
 
 export default function Employees({ toast, backendUp, openProfile }) {
@@ -33,7 +33,7 @@ export default function Employees({ toast, backendUp, openProfile }) {
   useEffect(() => { load() }, [backendUp])
 
   const open = mode => { setForm(mode === 'new' ? EMPTY : { ...mode, department_id: mode.department_id || null }); setEditing(mode) }
-  const set = k => e => setForm({ ...form, [k]: ['monthly_base', 'perf_ratio', 'special_deduction', 'department_id', 'supplemental_fund_rate'].includes(k) ? (e.target.value === '' ? null : +e.target.value) : e.target.value })
+  const set = k => e => setForm({ ...form, [k]: ['monthly_base', 'perf_ratio', 'special_deduction', 'department_id', 'supplemental_fund_rate', 'severance_amount'].includes(k) ? (e.target.value === '' ? null : +e.target.value) : e.target.value })
 
   const save = async () => {
     if (!form.name.trim()) return toast('姓名必填')
@@ -140,6 +140,9 @@ export default function Employees({ toast, backendUp, openProfile }) {
               <Field label="专项附加扣除/月（元）"><input type="number" value={form.special_deduction} onChange={set('special_deduction')} /></Field>
               <Field label="补充公积金比例（0-0.08）"><input type="number" step="0.01" min="0" max="0.08" value={form.supplemental_fund_rate ?? 0} onChange={set('supplemental_fund_rate')} /></Field>
               <Field label="入职月份"><input type="month" value={form.hire_month} onChange={set('hire_month')} /></Field>
+              <Field label="状态"><select value={form.status || 'active'} onChange={set('status')}><option value="active">在职</option><option value="offer">待入职</option><option value="departed">离职</option></select></Field>
+              {form.status === 'departed' && <Field label="离职月份"><input type="month" value={form.leave_month || ''} onChange={set('leave_month')} /></Field>}
+              {form.status === 'departed' && <Field label="离职补偿（显式金额）"><input type="number" min="0" value={form.severance_amount || 0} onChange={set('severance_amount')} /></Field>}
             </div>
             <div className="row">
               <Btn onClick={() => setEditing(null)}>取消</Btn>

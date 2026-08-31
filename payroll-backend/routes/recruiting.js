@@ -1,32 +1,43 @@
 // 招聘管理：需求 / 候选人管线（Kanban）/ 面试 / Offer / 渠道成本 / 漏斗与成本指标 / 候选人简历与 AI 解析
 import { Router } from 'express'
-import { db } from '../db.js'
+import { randomUUID } from 'node:crypto'
+import { audit, db, inTransaction } from '../db.js'
 import multer from 'multer'
 import path from 'node:path'
 import { mkdirSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { bandOf, bandPosition } from './cost.js'
 import { extractText, parseResume } from '../lib/resume_parser.js'
+import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
 
 export const recruiting = Router()
 
 export const CANDIDATE_STAGES = ['new', 'screening', 'interview', 'offer', 'hired', 'rejected', 'withdrawn']
 export const STAGE_LABELS = { new: '新简历', screening: '初筛', interview: '面试', offer: 'Offer', hired: '已入职', rejected: '已淘汰', withdrawn: '已放弃' }
 export const REQUISITION_STATUS = ['draft', 'open', 'interview', 'closed', 'cancelled']
+const STAGE_TRANSITIONS = {
+  new: ['screening', 'rejected', 'withdrawn'],
+  screening: ['new', 'interview', 'rejected', 'withdrawn'],
+  interview: ['screening', 'offer', 'rejected', 'withdrawn'],
+  offer: ['interview', 'rejected', 'withdrawn'],
+  rejected: ['screening'],
+  withdrawn: ['screening'],
+  hired: []
+}
 
 // 候选人简历上传目录
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CAND_UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'candidate_resumes')
-mkdirSync(CAND_UPLOAD_DIR, { recursive: true })
+mkdirSync(CAND_UPLOAD_DIR, { recursive: true, mode: 0o700 })
 const candUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, CAND_UPLOAD_DIR),
     filename: (req, file, cb) => {
-      const safe = (file.originalname || 'resume').replace(/[^\w.\u4e00-\u9fa5-]/g, '_')
-      cb(null, `cand${req.params.id}-${Date.now()}-${safe}`)
+      cb(null, `${randomUUID()}${path.extname(file.originalname || '').toLowerCase()}`)
     }
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: resumeFileFilter
 })
 
 // ── 招聘需求 ──
@@ -66,6 +77,7 @@ recruiting.put('/requisitions/:id', (req, res) => {
 })
 
 recruiting.delete('/requisitions/:id', (req, res) => {
+  if (db.prepare('SELECT 1 FROM candidates WHERE requisition_id=? LIMIT 1').get(req.params.id)) return res.status(409).json({ error: '该需求已有候选人，不可物理删除；请改为取消状态' })
   const r = db.prepare('DELETE FROM job_requisitions WHERE id=?').run(req.params.id)
   if (!r.changes) return res.status(404).json({ error: '需求不存在' })
   res.json({ ok: true })
@@ -103,27 +115,41 @@ recruiting.post('/candidates', (req, res) => {
   const b = req.body || {}
   if (!b.name) return res.status(400).json({ error: '缺少候选人姓名' })
   const r = db.prepare('INSERT INTO candidates(name,phone,email,source_channel,requisition_id,stage,apply_date,expected_salary,offer_amount,offer_date,onboard_date,eval_score,reject_reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(b.name, b.phone || '', b.email || '', b.source_channel || '内推', b.requisition_id || null, b.stage || 'new', b.apply_date || new Date().toISOString().slice(0, 10), b.expected_salary || null, b.offer_amount || null, b.offer_date || null, b.onboard_date || null, b.eval_score ?? null, b.reject_reason || '', new Date().toISOString().slice(0, 10))
+    .run(b.name, b.phone || '', b.email || '', b.source_channel || '内推', b.requisition_id || null, 'new', b.apply_date || new Date().toISOString().slice(0, 10), b.expected_salary || null, null, null, null, b.eval_score ?? null, '', new Date().toISOString().slice(0, 10))
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 
 recruiting.put('/candidates/:id', (req, res) => {
   const b = req.body || {}
-  const r = db.prepare(`UPDATE candidates SET
-    name=COALESCE(?,name), phone=COALESCE(?,phone), email=COALESCE(?,email),
-    source_channel=COALESCE(?,source_channel), requisition_id=?, stage=COALESCE(?,stage),
-    apply_date=COALESCE(?,apply_date), expected_salary=?, offer_amount=?, offer_date=?,
-    onboard_date=?, eval_score=?, reject_reason=COALESCE(?,reject_reason)
-    WHERE id=?`)
-    .run(b.name || null, b.phone || null, b.email || null, b.source_channel || null, b.requisition_id ?? null, b.stage || null, b.apply_date || null, b.expected_salary ?? null, b.offer_amount ?? null, b.offer_date || null, b.onboard_date || null, b.eval_score ?? null, b.reject_reason || null, req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '候选人不存在' })
+  const current = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
+  if (!current) return res.status(404).json({ error: '候选人不存在' })
+  const offerChanged = b.offer_amount !== undefined && Number(b.offer_amount) !== Number(current.offer_amount)
+  const next = { ...current }
+  for (const field of ['name', 'phone', 'email', 'source_channel', 'requisition_id', 'apply_date', 'expected_salary', 'offer_amount', 'offer_date', 'onboard_date', 'eval_score', 'reject_reason']) {
+    if (b[field] !== undefined) next[field] = b[field]
+  }
+  inTransaction(() => {
+    db.prepare(`UPDATE candidates SET
+      name=?, phone=?, email=?, source_channel=?, requisition_id=?,
+      apply_date=?, expected_salary=?, offer_amount=?, offer_date=?,
+      onboard_date=?, eval_score=?, reject_reason=?,
+      offer_status=CASE WHEN ? THEN NULL ELSE offer_status END
+      WHERE id=?`)
+      .run(next.name, next.phone, next.email, next.source_channel, next.requisition_id, next.apply_date, next.expected_salary, next.offer_amount, next.offer_date, next.onboard_date, next.eval_score, next.reject_reason, offerChanged ? 1 : 0, req.params.id)
+    if (offerChanged) db.prepare("UPDATE approvals SET status='cancelled', comment=COALESCE(comment,'Offer 金额变更，审批自动失效') WHERE ref_type='candidate' AND ref_id=? AND type='offer' AND status='pending'").run(req.params.id)
+    audit(req.user, 'update', 'candidate', current.id, current, { ...next, offer_status: offerChanged ? null : current.offer_status })
+  })
   res.json({ ok: true, id: Number(req.params.id) })
 })
 
 recruiting.delete('/candidates/:id', (req, res) => {
+  const candidate = db.prepare('SELECT resume_path, employee_id FROM candidates WHERE id=?').get(req.params.id)
+  if (!candidate) return res.status(404).json({ error: '候选人不存在' })
+  if (candidate.employee_id) return res.status(409).json({ error: '已入职候选人不可删除，请保留招聘审计链路' })
+  if (db.prepare('SELECT 1 FROM approvals WHERE ref_type=\'candidate\' AND ref_id=? LIMIT 1').get(req.params.id)) return res.status(409).json({ error: '已有审批记录的候选人不可物理删除' })
   db.prepare('DELETE FROM interviews WHERE candidate_id=?').run(req.params.id)
   const r = db.prepare('DELETE FROM candidates WHERE id=?').run(req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '候选人不存在' })
+  if (candidate.resume_path) { try { rmSync(candidate.resume_path, { force: true }) } catch { /* ignore */ } }
   res.json({ ok: true })
 })
 
@@ -131,44 +157,52 @@ recruiting.delete('/candidates/:id', (req, res) => {
 recruiting.post('/candidates/:id/stage', (req, res) => {
   const { stage, reject_reason } = req.body || {}
   if (!CANDIDATE_STAGES.includes(stage)) return res.status(400).json({ error: '非法阶段' })
+  if (stage === 'hired') return res.status(400).json({ error: '已入职阶段只能通过办理入职产生' })
+  const current = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
+  if (!current) return res.status(404).json({ error: '候选人不存在' })
+  if (!STAGE_TRANSITIONS[current.stage]?.includes(stage)) return res.status(409).json({ error: `不允许从 ${current.stage} 流转到 ${stage}` })
   const r = db.prepare('UPDATE candidates SET stage=?, reject_reason=COALESCE(?,reject_reason) WHERE id=?').run(stage, reject_reason || null, req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '候选人不存在' })
+  audit(req.user, 'stage_change', 'candidate', current.id, { stage: current.stage }, { stage })
   res.json({ ok: true, id: Number(req.params.id), stage })
 })
 
 // ── Offer → 入职打通：候选人转员工档案（招聘模块 → 员工模块闭环）──
 // 生成员工档案（职级/岗位/城市/月薪取自关联需求与 Offer）+ 自动记录入职事件
 recruiting.post('/candidates/:id/onboard', (req, res) => {
-  const { onboard_date, department_id, monthly_base } = req.body || {}
+  const { onboard_date, department_id } = req.body || {}
   const c = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
   if (!c) return res.status(404).json({ error: '候选人不存在' })
-  if (c.stage === 'hired') return res.status(400).json({ error: '该候选人已入职，请勿重复办理' })
+  if (c.employee_id || c.stage === 'hired') return res.status(409).json({ error: '该候选人已入职，请勿重复办理', employee_id: c.employee_id || null })
+  if (c.stage !== 'offer' || c.offer_status !== 'approved') return res.status(409).json({ error: '仅已通过 Offer 审批的候选人可以办理入职' })
   if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(onboard_date || '')) return res.status(400).json({ error: '入职日期必填且为 YYYY-MM-DD' })
   const r = c.requisition_id ? db.prepare('SELECT * FROM job_requisitions WHERE id=?').get(c.requisition_id) : null
   const ALLOWED_GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
   const grade = ALLOWED_GRADES.includes(r?.grade) ? r.grade : 'P4'
   const job_family = r?.job_family || '模拟IC设计'
   const city = r?.city || '上海'
-  const base = monthly_base || c.offer_amount || c.expected_salary
-  if (!base) return res.status(400).json({ error: '缺少薪资数据（Offer 或期望薪资）' })
+  const base = c.offer_amount
+  if (!base) return res.status(400).json({ error: '缺少已审批的 Offer 薪资' })
   const date = onboard_date
   const hire_month = date.slice(0, 7)
   const dept = department_id ?? r?.department_id ?? null
-  const ins = db.prepare('INSERT INTO employees(name,grade,job_family,city,category,status,monthly_base,perf_ratio,hire_month,department_id) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(c.name, grade, job_family, city, 'tech', 'active', base, 0.30, hire_month, dept)
-  const empId = ins.lastInsertRowid
-  db.prepare('INSERT INTO employee_events(employee_id,type,event_date,from_value,to_value,note) VALUES(?,?,?,?,?,?)')
-    .run(empId, 'onboard', date, null, `${job_family} ${grade}`, `由招聘入职：候选人 #${c.id}（${c.source_channel}）`)
-  // 更新候选人状态为已入职，回填入职日期
-  db.prepare("UPDATE candidates SET stage='hired', onboard_date=COALESCE(?,onboard_date) WHERE id=?").run(date, c.id)
-  // 需求状态联动：若该需求已满编则自动关闭
-  if (r) {
-    const filled = db.prepare("SELECT COUNT(*) c FROM candidates WHERE requisition_id=? AND stage='hired'").get(r.id).c
-    const need = r.headcount || 1
-    if (filled >= need && r.status !== 'closed') {
-      db.prepare("UPDATE job_requisitions SET status='closed', closed_at=date('now') WHERE id=?").run(r.id)
+  const empId = inTransaction(() => {
+    const fresh = db.prepare('SELECT * FROM candidates WHERE id=?').get(c.id)
+    if (fresh.employee_id || fresh.stage === 'hired') throw Object.assign(new Error('候选人已入职'), { statusCode: 409 })
+    if (fresh.stage !== 'offer' || fresh.offer_status !== 'approved') throw Object.assign(new Error('Offer 尚未批准'), { statusCode: 409 })
+    const ins = db.prepare('INSERT INTO employees(name,grade,job_family,city,category,status,monthly_base,perf_ratio,hire_month,department_id) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run(c.name, grade, job_family, city, 'tech', 'active', base, 0.30, hire_month, dept)
+    const id = ins.lastInsertRowid
+    db.prepare('INSERT INTO employee_events(employee_id,type,event_date,from_value,to_value,note) VALUES(?,?,?,?,?,?)')
+      .run(id, 'onboard', date, null, `${job_family} ${grade}`, `由招聘入职：候选人 #${c.id}（${c.source_channel}）`)
+    db.prepare("UPDATE candidates SET stage='hired', onboard_date=?, employee_id=? WHERE id=? AND employee_id IS NULL").run(date, id, c.id)
+    if (r) {
+      const filled = db.prepare("SELECT COUNT(*) c FROM candidates WHERE requisition_id=? AND stage='hired'").get(r.id).c
+      const need = r.headcount || 1
+      if (filled >= need && r.status !== 'closed') db.prepare("UPDATE job_requisitions SET status='closed', closed_at=date('now') WHERE id=?").run(r.id)
     }
-  }
+    audit(req.user, 'onboard', 'candidate', c.id, c, { employee_id: id, onboard_date: date })
+    return id
+  })
   res.json({ ok: true, employee_id: empId, candidate_id: c.id, name: c.name, hire_month, onboard_date: date })
 })
 
@@ -295,8 +329,15 @@ recruiting.get('/stats', (req, res) => {
 })
 
 // ── 候选人简历上传 / AI 解析 / 下载 / 删除（线索即结构化）──
-recruiting.post('/candidates/:id/resume', candUpload.single('resume'), (req, res) => {
+recruiting.post('/candidates/:id/resume', (req, res, next) => {
+  if (!db.prepare('SELECT id FROM candidates WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '候选人不存在' })
+  next()
+}, candUpload.single('resume'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: '缺少简历文件（字段名 resume）' })
+  if (!validateResumeFile(req.file)) {
+    try { rmSync(req.file.path, { force: true }) } catch { /* ignore */ }
+    return res.status(400).json({ error: '文件内容与扩展名不匹配' })
+  }
   const c = db.prepare('SELECT id, resume_path FROM candidates WHERE id=?').get(req.params.id)
   if (!c) return res.status(404).json({ error: '候选人不存在' })
   if (c.resume_path) { try { rmSync(c.resume_path, { force: true }) } catch { /* 忽略 */ } }
@@ -312,7 +353,7 @@ recruiting.post('/candidates/:id/resume/parse', async (req, res) => {
   const { text, unsupported, error } = await extractText(c.resume_path, '', c.resume_name)
   if (unsupported) return res.status(400).json({ error: '暂不支持该文件类型（支持 txt/md/docx/pdf）' })
   if (!text.trim()) return res.status(400).json({ error: '未能从文件中提取文本' + (error ? '：' + error : '') })
-  const parsed = await parseResume(text)
+  const parsed = await parseResume(text, { allowExternal: req.body?.allow_external === true })
   const b = parsed.basic || {}
   const skills = b.skills || (parsed.tags || []).join(',') || null
   db.prepare('UPDATE candidates SET resume_parsed=?, skills=?, tags=?, experience_years=? WHERE id=?')
@@ -343,12 +384,15 @@ recruiting.post('/candidates/:id/offer-approval', (req, res) => {
   const annual = c.offer_amount * 12
   const pos = r ? bandPosition(annual, r.job_family) : null
   const posLabel = pos === null ? '' : (pos < 25 ? '低于带宽' : pos > 75 ? '超出带宽' : '带宽内')
-  const id = 'OFF-' + Date.now().toString().slice(-8)
+  const existing = db.prepare("SELECT id FROM approvals WHERE ref_type='candidate' AND ref_id=? AND type='offer' AND status='pending'").get(c.id)
+  if (existing) return res.status(409).json({ error: '该候选人已有待审批 Offer', approval_id: existing.id })
+  const id = 'OFF-' + randomUUID()
   const title = `Offer 审批 · ${c.name}（${r?.job_family || ''} ${r?.grade || ''}）`
   const key = `现金 ¥${c.offer_amount.toLocaleString('zh-CN')}/月${pos !== null ? ` · 带宽 ${pos}%分位(${posLabel})` : ''}`
   const summary = `来源 ${c.source_channel} · 期望 ¥${c.expected_salary?.toLocaleString('zh-CN') || '—'}/月` + (c.eval_score ? ` · 评分 ${c.eval_score}` : '')
   db.prepare("INSERT INTO approvals(id,type,title,who,key,summary,status,page,ref_type,ref_id) VALUES(?,?,?,?,?,?,?,?,?,?)")
     .run(id, 'offer', title, req.body?.who || 'HR 李明', key, summary, 'pending', 'offer-approval', 'candidate', c.id)
   db.prepare("UPDATE candidates SET offer_status='pending' WHERE id=?").run(c.id)
+  audit(req.user, 'submit_offer_approval', 'candidate', c.id, { offer_status: c.offer_status }, { offer_status: 'pending', approval_id: id })
   res.json({ ok: true, approval_id: id, title, key, summary })
 })
