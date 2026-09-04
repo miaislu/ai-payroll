@@ -1,10 +1,11 @@
-// 简历解析引擎：文本提取（txt/md/docx/pdf）+ AI 解析（LLM 优先，规则降级）
+// 简历解析引擎：文本提取（txt/md/docx/pdf）+ 默认本地规则；外部 LLM 必须双重显式授权
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import mammoth from 'mammoth'
 import { PDFParse } from 'pdf-parse'
 import { chat, llmConfigured, LLM_MODEL } from './llm.js'
+import { redactForExternalLlm } from './pii.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -179,7 +180,7 @@ export function parseResumeByRules(text) {
   return { basic, education: edu, work_experience: work, engine: 'rules' }
 }
 
-// ── AI 解析（LLM 优先，失败/未配置降级规则）──
+// ── AI 解析（双重显式授权后使用外部 LLM，否则使用本地规则）──
 const PARSE_PROMPT = `你是资深 HR 简历解析器。请从下面的中文简历中提取结构化 JSON，只输出 JSON（不要 markdown 代码块、不要解释）：
 {
   "basic": { "name","gender","date_of_birth"(YYYY-MM-DD),"marital_status","nationality","education_level","mobile"(脱敏 138****1234),"personal_email","current_address","skills"(逗号分隔) },
@@ -192,35 +193,42 @@ const PARSE_PROMPT = `你是资深 HR 简历解析器。请从下面的中文简
 {TEXT}
 """`
 
-function redactSensitive(text) {
-  return text
-    .replace(/\b1[3-9]\d{9}\b/g, '[手机号已脱敏]')
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[邮箱已脱敏]')
-    .replace(/\b\d{17}[\dXx]\b/g, '[身份证号已脱敏]')
-    .replace(/\b\d{12,19}\b/g, '[长号码已脱敏]')
+function redactResume(text, localBasic) {
+  let redacted = redactForExternalLlm(text).text
+  for (const [key, value] of Object.entries(localBasic || {})) {
+    if (!value || key === 'skills' || key === 'education_level') continue
+    const literal = String(value).trim()
+    if (literal.length < 2) continue
+    redacted = redacted.split(literal).join(`[已脱敏:${key}]`)
+  }
+  return redacted
 }
 
-export async function parseResume(text, { allowExternal = false } = {}) {
+export async function parseResume(text, { allowExternal = false, onExternal = null } = {}) {
   const truncated = text.slice(0, 6000)
-  if (llmConfigured() && allowExternal) {
+  const externalEnabled = process.env.RESUME_EXTERNAL_LLM === 'true' && llmConfigured()
+  if (externalEnabled && allowExternal) {
     try {
       const local = parseResumeByRules(truncated)
+      const redacted = redactResume(truncated, local.basic)
+      onExternal?.({ model: LLM_MODEL, source_length: truncated.length, redacted_length: redacted.length })
       const raw = await chat([
         { role: 'system', content: '你是精确的 JSON 输出器。' },
-        { role: 'user', content: PARSE_PROMPT.replace('{TEXT}', redactSensitive(truncated)) }
+        { role: 'user', content: PARSE_PROMPT.replace('{TEXT}', redacted) }
       ], { maxTokens: 1200, temperature: 0.1 })
       const json = raw.replace(/```json|```/g, '').trim()
       const m = json.match(/\{[\s\S]*\}/)
       if (m) {
         const parsed = JSON.parse(m[0])
-        parsed.basic = { ...(parsed.basic || {}), ...Object.fromEntries(Object.entries(local.basic || {}).filter(([k]) => ['mobile', 'personal_email'].includes(k))) }
+        const localPii = Object.fromEntries(Object.entries(local.basic || {}).filter(([k]) => ['name', 'gender', 'date_of_birth', 'marital_status', 'nationality', 'mobile', 'personal_email', 'current_address'].includes(k)))
+        parsed.basic = { ...(parsed.basic || {}), ...localPii }
         return { ...enrichParsed(parsed, truncated), engine: 'llm', model: LLM_MODEL }
       }
     } catch (e) {
       console.warn('[resume] LLM 解析失败，降级规则:', e.message)
     }
   }
-  return { ...enrichParsed(parseResumeByRules(truncated), truncated), engine: allowExternal ? 'rules-fallback' : 'rules-local' }
+  return { ...enrichParsed(parseResumeByRules(truncated), truncated), engine: allowExternal && externalEnabled ? 'rules-fallback' : 'rules-local' }
 }
 
 // 解析结果 → 应用档案字段映射（与 routes/employee.js 白名单一致）

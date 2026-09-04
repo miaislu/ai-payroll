@@ -1,15 +1,4 @@
-// 纯计算逻辑（与原型/附录 E 一致，便于单元测试）
-import { CITIES, EXPS, TYPES, STAGES } from '../data.js'
-
-export function benchmarkCalc(direction, city, exp, type, stage) {
-  const d = direction
-  const p50 = Math.round(d.p50 * CITIES[city] * EXPS[exp] * TYPES[type])
-  const p25 = Math.round(p50 * 0.78)
-  const p75 = Math.round(p50 * 1.28)
-  const total = Math.round(p50 * (1 + STAGES[stage]) * d.rarity)
-  const conf = d.sample >= 120 ? '高' : (d.sample >= 60 ? '中' : '低')
-  return { p25, p50, p75, total, rarity: d.rarity, trend: d.trend, sample: Math.round(d.sample * CITIES[city]), hidden: d.sample > 100 ? 18 : 25, conf }
-}
+// 期权情景模拟的纯计算逻辑；输入概率和倍数均由用户显式提供。
 
 // 简化综合所得税率表（无速算扣除，原型演示口径）
 export function bracketTax(w) {

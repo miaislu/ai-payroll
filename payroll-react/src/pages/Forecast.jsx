@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Kpi, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Kpi, Btn, Field, Modal } from '../components/ui.jsx'
 import Chart from '../components/Chart.jsx'
 import { getCostForecast, getCostUnit, getDepartments, getHeadcountPlans, createHeadcountPlan, deleteHeadcountPlan } from '../api.js'
+import { formatWan } from '../lib/format.js'
+import { addMonths, currentPeriod } from '../lib/period.js'
 
-const wan = v => '¥' + (Math.round(v / 10000 * 10) / 10) + '万'
 
 export default function Forecast({ toast, backendUp }) {
   const [data, setData] = useState(null)
@@ -11,12 +12,12 @@ export default function Forecast({ toast, backendUp }) {
   const [plans, setPlans] = useState(null)
   const [depts, setDepts] = useState([])
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ department_id: null, year_month: '2025-07', planned: 1, note: '' })
+  const [form, setForm] = useState({ department_id: null, year_month: addMonths(currentPeriod(), 1), planned: 1, note: '' })
 
   const load = async () => {
     try {
       setData(await getCostForecast(6))
-      setUnit(await getCostUnit('2025-06'))
+      setUnit(await getCostUnit(currentPeriod()))
       setPlans(await getHeadcountPlans())
       setDepts((await getDepartments()).list)
     } catch { toast('预测数据加载失败') }
@@ -29,7 +30,7 @@ export default function Forecast({ toast, backendUp }) {
       await createHeadcountPlan({ ...form, planned: +form.planned })
       toast('已保存编制计划')
       setAdding(false)
-      setForm({ department_id: null, year_month: '2025-07', planned: 1, note: '' })
+      setForm({ department_id: null, year_month: addMonths(currentPeriod(), 1), planned: 1, note: '' })
       load()
     } catch { toast('保存失败') }
   }
@@ -46,7 +47,7 @@ export default function Forecast({ toast, backendUp }) {
     <>
       <div className="grid g4">
         <Kpi label="当前人均成本/月" num={unit ? '¥' + unit.perCapitaMonthly.toLocaleString('zh-CN') : '—'} sub={unit?.period} numColor="#2f54eb" />
-        <Kpi label="年化人均成本" num={unit ? wan(unit.perCapitaAnnual) : '—'} sub="公司口径 · 含社保公积金" numColor="#7c3aed" />
+        <Kpi label="年化人均成本" num={unit ? formatWan(unit.perCapitaAnnual) : '—'} sub="公司口径 · 含社保公积金" numColor="#7c3aed" />
         <Kpi label="社保公积金负担" num={unit ? unit.socialFundBurden + '%' : '—'} sub="占应发工资比（≈26%+7%）" numColor="#d97706" />
         <Kpi label="招聘成本负担" num={unit ? unit.recruitingBurden + '%' : '—'} sub="占公司成本比" numColor="#dc2626" />
       </div>
@@ -67,7 +68,7 @@ export default function Forecast({ toast, backendUp }) {
                 {data.series.map(s => (
                   <tr key={s.period}>
                     <td><b>{s.period}</b></td>
-                    <td style={{ fontWeight: 600 }}>{wan(s.total)}</td>
+                    <td style={{ fontWeight: 600 }}>{formatWan(s.total)}</td>
                     <td>{s.planned} 人</td>
                     <td>{s.plannedManual || 0}</td>
                     <td>{s.plannedRequisition ? <span style={{ color: '#d97706', fontWeight: 600 }}>+{s.plannedRequisition}</span> : 0}</td>
@@ -115,7 +116,7 @@ export default function Forecast({ toast, backendUp }) {
       </Card>
 
       {adding && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdding(false)}>
+        <Modal onClose={() => setAdding(false)}>
           <div className="modal">
             <h3>新增编制计划</h3>
             <div className="grid g2">
@@ -134,7 +135,7 @@ export default function Forecast({ toast, backendUp }) {
               <Btn primary onClick={savePlan}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

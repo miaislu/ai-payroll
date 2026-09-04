@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getCostBudget, getDepartments, createBudget } from '../api.js'
 import { COST_CATEGORY_LABELS } from '../data.js'
+import { formatWan } from '../lib/format.js'
+import { currentPeriod, periodOptions } from '../lib/period.js'
 
-const wan = v => '¥' + (Math.round(v / 10000 * 10) / 10) + '万'
-const PERIODS = ['2025-05', '2025-06', '2025-07']
 const CATS = ['salary', 'social', 'fund', 'option', 'recruiting', 'other']
 
 export default function Budget({ toast, backendUp }) {
-  const [period, setPeriod] = useState('2025-06')
+  const [period, setPeriod] = useState(currentPeriod())
   const [data, setData] = useState(null)
   const [depts, setDepts] = useState([])
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ year_month: '2025-06', department_id: null, category: 'salary', amount: '', note: '' })
+  const [form, setForm] = useState({ year_month: currentPeriod(), department_id: null, category: 'salary', amount: '', note: '' })
 
   const load = async p => {
     try { setData(await getCostBudget(p)); setDepts((await getDepartments()).list) } catch { toast('预算数据加载失败') }
@@ -30,10 +30,10 @@ export default function Budget({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
 
-  const cell = (v, kind) => {
-    if (v === undefined || v === null) return <span className="hint">—</span>
-    const over = v < 0
-    return <span style={{ color: over ? '#dc2626' : 'inherit', fontWeight: over ? 600 : 400 }}>{wan(v)}</span>
+  const cell = (v) => {
+    if (v === undefined || v === null) return <td className="hint">—</td>
+    const over = v > 0
+    return <td style={{ color: over ? '#dc2626' : 'inherit', fontWeight: over ? 600 : 400 }}>{formatWan(v)}</td>
   }
   const diff = (a, b) => a - b
   const deptName = id => depts.find(d => d.id === id)?.name || '未分配'
@@ -45,57 +45,61 @@ export default function Budget({ toast, backendUp }) {
           <Hint>预算按 部门 × 成本类别 维护（cost_budgets 表）；实际 = 公司口径成本聚合 + 渠道费用（招聘成本）</Hint>
           <div style={{ flex: 1 }} />
           <select value={period} onChange={e => setPeriod(e.target.value)}>
-            {PERIODS.map(p => <option key={p}>{p}</option>)}
+            {periodOptions().map(p => <option key={p}>{p}</option>)}
           </select>
           <Btn primary onClick={() => { setForm({ year_month: period, department_id: null, category: 'salary', amount: '', note: '' }); setAdding(true) }}>+ 新增预算</Btn>
         </div>
 
         <table>
-          <tr>
-            <th rowSpan={2}>部门</th>
-            <th colSpan={3}>应发工资</th>
-            <th colSpan={3}>公司社保</th>
-            <th colSpan={3}>公司公积金</th>
-            <th colSpan={3}>招聘成本</th>
-            <th rowSpan={2}>合计差额</th>
-          </tr>
-          <tr>
-            {[...Array(4)].map((_, i) => (
-              <span key={i} style={{ display: 'contents' }}>
-                <th>预算</th><th>实际</th><th>差</th>
-              </span>
-            ))}
-          </tr>
+          <thead>
+            <tr>
+              <th rowSpan={2}>部门</th>
+              <th colSpan={3}>应发工资</th>
+              <th colSpan={3}>公司社保</th>
+              <th colSpan={3}>公司公积金</th>
+              <th colSpan={3}>招聘成本</th>
+              <th rowSpan={2}>合计差额</th>
+            </tr>
+            <tr>
+              {['应发', '社保', '公积金', '招聘'].flatMap(k => [
+                <th key={k + 'b'}>预算</th>,
+                <th key={k + 'a'}>实际</th>,
+                <th key={k + 'd'}>差</th>
+              ])}
+            </tr>
+          </thead>
+          <tbody>
           {data?.rows.map(r => {
             const b = r.budget || {}
             const a = r.actual || {}
             return (
               <tr key={r.key}>
                 <td><b>{r.name}</b></td>
-                {cell(b.salary)} {cell(a.salary)} {cell(diff(a.salary || 0, b.salary || 0))}
-                {cell(b.social)} {cell(a.social)} {cell(diff(a.social || 0, b.social || 0))}
-                {cell(b.fund)} {cell(a.fund)} {cell(diff(a.fund || 0, b.fund || 0))}
-                {cell(b.recruiting)} {cell(a.recruiting)} {cell(diff(a.recruiting || 0, b.recruiting || 0))}
-                <td>{cell(diff((a.salary || 0) + (a.social || 0) + (a.fund || 0) + (a.recruiting || 0), (b.salary || 0) + (b.social || 0) + (b.fund || 0) + (b.recruiting || 0)))}</td>
+                {cell(b.salary)}{cell(a.salary)}{cell(diff(a.salary || 0, b.salary || 0))}
+                {cell(b.social)}{cell(a.social)}{cell(diff(a.social || 0, b.social || 0))}
+                {cell(b.fund)}{cell(a.fund)}{cell(diff(a.fund || 0, b.fund || 0))}
+                {cell(b.recruiting)}{cell(a.recruiting)}{cell(diff(a.recruiting || 0, b.recruiting || 0))}
+                {cell(diff((a.salary || 0) + (a.social || 0) + (a.fund || 0) + (a.recruiting || 0), (b.salary || 0) + (b.social || 0) + (b.fund || 0) + (b.recruiting || 0)))}
               </tr>
             )
           })}
           {data && (
             <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
               <td>合计</td>
-              <td>{cell(data.totals.budget.salary)}</td><td>{cell(data.totals.actual.salary)}</td><td>{cell(diff(data.totals.actual.salary || 0, data.totals.budget.salary || 0))}</td>
-              <td>{cell(data.totals.budget.social)}</td><td>{cell(data.totals.actual.social)}</td><td>{cell(diff(data.totals.actual.social || 0, data.totals.budget.social || 0))}</td>
-              <td>{cell(data.totals.budget.fund)}</td><td>{cell(data.totals.actual.fund)}</td><td>{cell(diff(data.totals.actual.fund || 0, data.totals.budget.fund || 0))}</td>
-              <td>{cell(data.totals.budget.recruiting)}</td><td>{cell(data.totals.actual.recruiting)}</td><td>{cell(diff(data.totals.actual.recruiting || 0, data.totals.budget.recruiting || 0))}</td>
-              <td>{cell(diff((data.totals.actual.salary || 0) + (data.totals.actual.social || 0) + (data.totals.actual.fund || 0) + (data.totals.actual.recruiting || 0), (data.totals.budget.salary || 0) + (data.totals.budget.social || 0) + (data.totals.budget.fund || 0) + (data.totals.budget.recruiting || 0)))}</td>
+              {cell(data.totals.budget.salary)}{cell(data.totals.actual.salary)}{cell(diff(data.totals.actual.salary || 0, data.totals.budget.salary || 0))}
+              {cell(data.totals.budget.social)}{cell(data.totals.actual.social)}{cell(diff(data.totals.actual.social || 0, data.totals.budget.social || 0))}
+              {cell(data.totals.budget.fund)}{cell(data.totals.actual.fund)}{cell(diff(data.totals.actual.fund || 0, data.totals.budget.fund || 0))}
+              {cell(data.totals.budget.recruiting)}{cell(data.totals.actual.recruiting)}{cell(diff(data.totals.actual.recruiting || 0, data.totals.budget.recruiting || 0))}
+              {cell(diff((data.totals.actual.salary || 0) + (data.totals.actual.social || 0) + (data.totals.actual.fund || 0) + (data.totals.actual.recruiting || 0), (data.totals.budget.salary || 0) + (data.totals.budget.social || 0) + (data.totals.budget.fund || 0) + (data.totals.budget.recruiting || 0)))}
             </tr>
           )}
+          </tbody>
         </table>
-        <Hint style={{ marginTop: 8 }}>负值（红色）= 超预算。期权摊销与「其他」类暂未计入本表口径。</Hint>
+        <Hint style={{ marginTop: 8 }}>差额 = 实际 - 预算；正值（红色）表示超预算。期权摊销与「其他」类暂未计入本表口径。</Hint>
       </Card>
 
       {adding && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdding(false)}>
+        <Modal onClose={() => setAdding(false)}>
           <div className="modal">
             <h3>新增预算（{form.year_month}）</h3>
             <div className="grid g2">
@@ -119,7 +123,7 @@ export default function Budget({ toast, backendUp }) {
               <Btn primary onClick={saveBudget}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

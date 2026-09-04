@@ -1,6 +1,6 @@
 # 对标数据质量验证报告
 
-> 生成时间: 2026-08-31  ·  数据集: /Users/miazhang/Documents/DSH/ai-payroll/benchmark-data/benchmark-dataset.json
+> 生成时间: 2026-09-03  ·  数据集: benchmark-dataset.json
 > 说明: 数据来源为公开行业报告/白皮书/政府指导价/媒体，仅供内部对标库校准参考，不构成薪酬建议。
 
 ## 一、结构完整性（S1/S2）

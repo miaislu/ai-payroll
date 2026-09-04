@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field, Kpi } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Kpi, Modal } from '../components/ui.jsx'
 import { getEquityPool, updateEquityPool, getEquityGrants, createEquityGrant, updateEquityGrant, deleteEquityGrant, getEquitySummary, getEmployees } from '../api.js'
+import { formatWan } from '../lib/format.js'
 
-const wan = v => '¥' + (Math.round(v / 10000 * 10) / 10) + '万'
 const STATUS_LABEL = { granted: '归属中', vested: '已归属', exercised: '已行权', forfeited: '已失效' }
 const STATUS_KIND = { granted: 'info', vested: 'ok', exercised: 'ok', forfeited: 'warn' }
 const EMPTY = { employee_id: null, grant_date: new Date().toISOString().slice(0, 10), share_count: '', exercise_price: 1, fair_value: 50, vesting_months: 48, cliff_months: 12, status: 'granted', note: '' }
@@ -51,8 +51,8 @@ export default function Equity({ toast, backendUp }) {
       <div className="grid g4">
         <Kpi label="期权池" num={pool ? pool.pool_percent + '%' : '—'} sub={pool ? `共 ${pool.total_shares} 万股` : ''} numColor="#8b5cf6" />
         <Kpi label="已授予 / 剩余" num={pool ? `${pool.granted_shares} / ${pool.remaining_shares} 万股` : '—'} sub={`${pool?.active_employees || 0} 名员工持授予`} numColor="#2f54eb" />
-        <Kpi label="月摊销（联动成本）" num={pool ? '¥' + pool.monthly_amort.toLocaleString('zh-CN') : '—'} sub={`年摊销 ${pool ? wan(pool.annual_amort) : '—'}`} numColor="#dc2626" />
-        <Kpi label="每股公允价" num={pool ? '¥' + pool.share_price : '—'} sub={pool ? `估值 ${wan(pool.valuation_wan)}` : ''} numColor="#10b981" />
+        <Kpi label="月摊销（联动成本）" num={pool ? '¥' + pool.monthly_amort.toLocaleString('zh-CN') : '—'} sub={`年摊销 ${pool ? formatWan(pool.annual_amort) : '—'}`} numColor="#dc2626" />
+        <Kpi label="每股公允价" num={pool ? '¥' + pool.share_price : '—'} sub={pool ? `估值 ${formatWan(pool.valuation_wan)}` : ''} numColor="#10b981" />
       </div>
 
       <Card title={<>期权授予台账 <Chip kind="info">{grants?.length || 0} 条</Chip></>} style={{ marginTop: 14 }}>
@@ -73,7 +73,7 @@ export default function Equity({ toast, backendUp }) {
               <td>¥{g.exercise_price}</td>
               <td>¥{g.fair_value}</td>
               <td>{g.vesting_months} 月{g.cliff_months > 0 ? `（cliff ${g.cliff_months}）` : ''}</td>
-              <td style={{ fontWeight: 600 }}>{wan(g.total_value)}</td>
+              <td style={{ fontWeight: 600 }}>{formatWan(g.total_value)}</td>
               <td style={{ color: '#dc2626' }}>¥{g.monthly_amort.toLocaleString('zh-CN')}/月</td>
               <td><Chip kind={STATUS_KIND[g.status]}>{STATUS_LABEL[g.status] || g.status}</Chip></td>
               <td className="hint">{g.note || '—'}</td>
@@ -96,7 +96,7 @@ export default function Equity({ toast, backendUp }) {
                 <tr key={x.employee_id}>
                   <td><b>{x.name}</b></td><td>{x.department || '—'}</td>
                   <td style={{ color: '#dc2626' }}>¥{x.monthly_amort.toLocaleString('zh-CN')}</td>
-                  <td>{wan(x.total_value)}</td>
+                  <td>{formatWan(x.total_value)}</td>
                 </tr>
               ))}
             </table>
@@ -108,7 +108,7 @@ export default function Equity({ toast, backendUp }) {
                 <tr key={x.name}>
                   <td><b>{x.name}</b></td>
                   <td style={{ color: '#dc2626' }}>¥{x.monthly.toLocaleString('zh-CN')}</td>
-                  <td>{wan(x.total)}</td>
+                  <td>{formatWan(x.total)}</td>
                   <td>{summary.totalMonthly ? Math.round(x.monthly / summary.totalMonthly * 100) + '%' : '—'}</td>
                 </tr>
               ))}
@@ -118,7 +118,7 @@ export default function Equity({ toast, backendUp }) {
       )}
 
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(null)}>
+        <Modal onClose={() => setEditing(null)}>
           <div className="modal" style={{ width: 600 }}>
             <h3>{editing === 'new' ? '新增期权授予' : '编辑授予 · ' + editing.employee_name}</h3>
             <div className="grid g2">
@@ -142,18 +142,18 @@ export default function Equity({ toast, backendUp }) {
               <Field label="备注" style={{ gridColumn: '1 / -1' }}><input value={form.note} onChange={set('note')} /></Field>
             </div>
             {form.share_count && form.fair_value && (
-              <Hint style={{ marginTop: 8 }}>授予价值 = {form.share_count}万 × ({form.fair_value}−{form.exercise_price}) = <b>{wan(Math.round(form.share_count * 10000 * (form.fair_value - form.exercise_price)))}</b>；月摊销 = <b>¥{Math.round(form.share_count * 10000 * (form.fair_value - form.exercise_price) / (form.vesting_months || 48)).toLocaleString('zh-CN')}</b>/月</Hint>
+              <Hint style={{ marginTop: 8 }}>授予价值 = {form.share_count}万 × ({form.fair_value}−{form.exercise_price}) = <b>{formatWan(Math.round(form.share_count * 10000 * (form.fair_value - form.exercise_price)))}</b>；月摊销 = <b>¥{Math.round(form.share_count * 10000 * (form.fair_value - form.exercise_price) / (form.vesting_months || 48)).toLocaleString('zh-CN')}</b>/月</Hint>
             )}
             <div className="row">
               <Btn onClick={() => setEditing(null)}>取消</Btn>
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {editingPool && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditingPool(false)}>
+        <Modal onClose={() => setEditingPool(false)}>
           <div className="modal">
             <h3>期权池设置</h3>
             <div className="grid g2">
@@ -166,7 +166,7 @@ export default function Equity({ toast, backendUp }) {
               <Btn primary onClick={savePool}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

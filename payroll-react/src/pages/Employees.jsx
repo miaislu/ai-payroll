@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getDepartments, getEmployeeEvents, createEmployeeEvent, deleteEmployeeEvent } from '../api.js'
 import { DIRECTIONS, CITIES } from '../data.js'
+import { currentDate, currentPeriod } from '../lib/period.js'
 
 const GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
 const SUPPORT_FAMILIES = ['财务', '人力资源', '行政', '市场', '法务', '采购', '质量体系']
@@ -14,14 +15,14 @@ const EVENT_TYPES = [
   { key: 'promotion', label: '晋升' }, { key: 'transfer', label: '调动' },
   { key: 'offboard', label: '离职' }
 ]
-const EMPTY = { name: '', grade: 'P4', job_family: '模拟IC设计', city: '上海', monthly_base: 20000, perf_ratio: 0.3, special_deduction: 0, hire_month: '2025-06', leave_month: '', severance_amount: 0, department_id: null, category: 'tech', status: 'active', employment_type: 'employee', supplemental_fund_rate: 0 }
+const emptyEmployee = () => ({ name: '', grade: 'P4', job_family: '模拟IC设计', city: '上海', monthly_base: 20000, perf_ratio: 0.3, special_deduction: 0, hire_date: currentDate(), hire_month: currentPeriod(), leave_date: '', leave_month: '', effective_month: currentPeriod(), severance_amount: 0, department_id: null, category: 'tech', status: 'active', employment_type: 'employee', supplemental_fund_rate: 0 })
 const EV_EMPTY = { type: 'onboard', event_date: '', from_value: '', to_value: '', note: '' }
 
 export default function Employees({ toast, backendUp, openProfile }) {
   const [list, setList] = useState(null)
   const [depts, setDepts] = useState([])
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState(EMPTY)
+  const [form, setForm] = useState(emptyEmployee)
   const [confirmDel, setConfirmDel] = useState(null)
   const [eventView, setEventView] = useState(null) // 员工事件面板
   const [events, setEvents] = useState([])
@@ -32,7 +33,19 @@ export default function Employees({ toast, backendUp, openProfile }) {
   }
   useEffect(() => { load() }, [backendUp])
 
-  const open = mode => { setForm(mode === 'new' ? EMPTY : { ...mode, department_id: mode.department_id || null }); setEditing(mode) }
+  const open = mode => {
+    const value = mode === 'new'
+      ? emptyEmployee()
+      : {
+          ...mode,
+          department_id: mode.department_id || null,
+          hire_date: mode.hire_date || `${mode.hire_month}-01`,
+          leave_date: mode.leave_date || '',
+          effective_month: currentPeriod()
+        }
+    setForm(value)
+    setEditing(mode)
+  }
   const set = k => e => setForm({ ...form, [k]: ['monthly_base', 'perf_ratio', 'special_deduction', 'department_id', 'supplemental_fund_rate', 'severance_amount'].includes(k) ? (e.target.value === '' ? null : +e.target.value) : e.target.value })
 
   const save = async () => {
@@ -105,7 +118,7 @@ export default function Employees({ toast, backendUp, openProfile }) {
       </Card>
 
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(null)}>
+        <Modal onClose={() => setEditing(null)}>
           <div className="modal" style={{ width: 620 }}>
             <h3>{editing === 'new' ? '新增员工' : '编辑员工 · ' + editing.name}</h3>
             <div className="grid g2">
@@ -139,9 +152,10 @@ export default function Employees({ toast, backendUp, openProfile }) {
               <Field label="绩效比例（0-1）"><input type="number" step="0.01" value={form.perf_ratio} onChange={set('perf_ratio')} /></Field>
               <Field label="专项附加扣除/月（元）"><input type="number" value={form.special_deduction} onChange={set('special_deduction')} /></Field>
               <Field label="补充公积金比例（0-0.08）"><input type="number" step="0.01" min="0" max="0.08" value={form.supplemental_fund_rate ?? 0} onChange={set('supplemental_fund_rate')} /></Field>
-              <Field label="入职月份"><input type="month" value={form.hire_month} onChange={set('hire_month')} /></Field>
+              <Field label="入职日期"><input type="date" value={form.hire_date || ''} onChange={set('hire_date')} /></Field>
+              {editing !== 'new' && <Field label="薪酬变更生效月份"><input type="month" value={form.effective_month || currentPeriod()} onChange={set('effective_month')} /></Field>}
               <Field label="状态"><select value={form.status || 'active'} onChange={set('status')}><option value="active">在职</option><option value="offer">待入职</option><option value="departed">离职</option></select></Field>
-              {form.status === 'departed' && <Field label="离职月份"><input type="month" value={form.leave_month || ''} onChange={set('leave_month')} /></Field>}
+              {form.status === 'departed' && <Field label="离职日期"><input type="date" value={form.leave_date || ''} onChange={set('leave_date')} /></Field>}
               {form.status === 'departed' && <Field label="离职补偿（显式金额）"><input type="number" min="0" value={form.severance_amount || 0} onChange={set('severance_amount')} /></Field>}
             </div>
             <div className="row">
@@ -149,11 +163,11 @@ export default function Employees({ toast, backendUp, openProfile }) {
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {eventView && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEventView(null)}>
+        <Modal onClose={() => setEventView(null)}>
           <div className="modal" style={{ width: 560, maxHeight: '86vh', overflowY: 'auto' }}>
             <h3>入转调离 · {eventView.name}</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
@@ -183,11 +197,11 @@ export default function Employees({ toast, backendUp, openProfile }) {
               <Btn primary onClick={addEvent}>+ 记录事件</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {confirmDel && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setConfirmDel(null)}>
+        <Modal onClose={() => setConfirmDel(null)}>
           <div className="modal">
             <h3>删除员工</h3>
             <p className="hint">确认删除「{confirmDel.name}」？历史工资单记录会保留（工资单表存有快照），但该员工将不再出现在后续算薪与仪表盘中。</p>
@@ -196,7 +210,7 @@ export default function Employees({ toast, backendUp, openProfile }) {
               <Btn primary onClick={del}>确认删除</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

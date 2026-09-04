@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Modal } from '../components/ui.jsx'
 import { getPayslipMe } from '../api.js'
 
-export default function Payslip({ goto, backendUp }) {
-  const [data, setData] = useState(null)
+export default function Payslip({ goto, backendUp, user, toast }) {
+  const [data, setData] = useState(undefined)
   const [modal, setModal] = useState(false)
   const [text, setText] = useState('')
 
@@ -18,23 +18,24 @@ export default function Payslip({ goto, backendUp }) {
     return () => { alive = false }
   }, [backendUp])
 
-  const emp = data?.employee || { name: '张三', grade: 'P5', job_family: '模拟IC设计工程师' }
-  const items = data?.items || [
-    { label: '基本工资', value: '25,000' }, { label: '绩效奖金', value: '8,000' }, { label: '加班费', value: '0' },
-    { label: '社保（个人）', value: '-2,450' }, { label: '公积金（个人）', value: '-1,500' }, { label: '个人所得税', value: '-2,310' }
-  ]
-  const net = data?.net || '30,690'
-  const aiNote = data?.ai_note || '本月社保基数按 2025 年新基数调整，个人部分 +210 元；个税同比 -180 元（因专项附加扣除更新）。实发与 5 月基本持平。'
-  const option = data?.option || { granted: 100000, strike: 0.5, vested: '25%', est_value: '≈ 52.5 万（未扣税）' }
+  if (data === undefined) return <Card><Hint>薪酬单加载中…</Hint></Card>
+  if (!data) return <Card><Hint>{backendUp ? '未关联员工档案，或该月没有工资单。创始人账号默认不绑定员工。' : '后端未连接'}</Hint></Card>
+
+  const emp = data.employee
+  const items = data.items || []
+  const net = data.net
+  const aiNote = data.ai_note
+  const option = data.option || null
+  const status = data.status === 'paid' ? ['ok', '已发放'] : data.status === 'submitted' ? ['info', '已锁定'] : ['warn', '预览']
 
   return (
     <>
       <Card>
         <div className="payslip-head">
-          <div className="avatar">张</div>
+          <div className="avatar">{(emp.name || '?').slice(0, 1)}</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>{emp.name} · {emp.job_family}（{emp.grade}）</div>
-            <div style={{ color: 'var(--muted)', fontSize: 12 }}>{data?.period || '2025-06'} · 仅自己可见 · <Chip kind="ok">已发放</Chip>{backendUp && <span className="chip info" style={{ marginLeft: 6 }}>后端实时计算</span>}</div>
+            <div style={{ color: 'var(--muted)', fontSize: 12 }}>{data?.period || '—'} · 仅自己可见 · <Chip kind={status[0]}>{status[1]}</Chip>{data.live && <span className="chip warn" style={{ marginLeft: 6 }}>实时预览，非付款凭证</span>}</div>
           </div>
         </div>
         <table className="money-table">
@@ -53,24 +54,27 @@ export default function Payslip({ goto, backendUp }) {
         </div>
       </Card>
 
-      <Card title={<>我的期权 <Chip kind="info">已归属 {option.vested}</Chip></>}>
-        <Hint>授予：{(option.granted / 10000).toFixed(0)} 万股 · 行权价 {option.strike} 元 · 4 年归属（1 年 cliff）</Hint>
-        <Hint style={{ marginTop: 6 }}>最新估值（B 轮）：8 元/股。当前行权价值：<b style={{ color: 'var(--accent)' }}>{option.est_value}</b>（未扣税）</Hint>
-        <div style={{ marginTop: 10 }}><Btn sm onClick={() => goto('option')}>用模拟器看看完整价值</Btn></div>
-      </Card>
+      {option && (
+        <Card title={<>我的期权 <Chip kind="info">{option.vested || '台账'}</Chip></>}>
+          <Hint>授予：{((option.granted || 0) / 10000).toFixed(2)} 万股{option.strike != null ? ` · 行权价 ${option.strike} 元` : ''}</Hint>
+          {user?.role !== 'emp' && (
+            <div style={{ marginTop: 10 }}><Btn sm onClick={() => goto('option')}>用模拟器看看完整价值</Btn></div>
+          )}
+        </Card>
+      )}
 
       {modal && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setModal(false)}>
+        <Modal onClose={() => setModal(false)}>
           <div className="modal">
             <h3>薪酬申诉</h3>
             <p className="hint" style={{ marginBottom: 8 }}>提交后 HR 将在 48 小时内人工响应；申诉不影响已发放金额。</p>
             <textarea value={text} onChange={e => setText(e.target.value)} placeholder="请描述疑问，例如：6 月社保扣款比上月多了 210 元…" />
             <div className="row">
               <Btn onClick={() => setModal(false)}>取消</Btn>
-              <Btn primary onClick={() => { setModal(false); setText('') }}>提交申诉</Btn>
+              <Btn primary onClick={() => { setModal(false); setText(''); (toast || (() => {}))('申诉通道尚未开放，请直接联系 HR') }}>提交申诉</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

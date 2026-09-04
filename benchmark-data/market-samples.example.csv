@@ -1,0 +1,7 @@
+direction,city,exp_band,company_type,annual_cash_wan,source,title
+模拟IC设计,上海,3-5年,Fabless,48,import:csv,示例-中位附近
+模拟IC设计,上海,3-5年,Fabless,45,import:csv,示例-带宽下部
+模拟IC设计,上海,3-5年,Fabless,51,import:csv,示例-中位
+模拟IC设计,上海,3-5年,Fabless,55,import:csv,示例-略高于校准P50
+模拟IC设计,上海,3-5年,Fabless,62,import:csv,示例-P75附近
+数字前端(RTL),上海,3-5年,Fabless,52,import:csv,示例

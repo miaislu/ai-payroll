@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getChannels, createChannel, updateChannel, deleteChannel, createChannelExpense, deleteChannelExpense, getRecruitingStats } from '../api.js'
+import { formatWanInt } from '../lib/format.js'
+import { currentPeriod } from '../lib/period.js'
 
-const wan = v => '¥' + (Math.round(v / 100) / 100).toFixed(0) + '万'
 const TYPE_LABEL = { job_board: '招聘平台', headhunter: '猎头', employee_ref: '内推', university: '校园招聘', other: '其他' }
 
 export default function Channels({ toast, backendUp }) {
@@ -32,7 +33,7 @@ export default function Channels({ toast, backendUp }) {
   const addExpense = async () => {
     if (!exp.amount) return toast('填写金额')
     try {
-      await createChannelExpense({ channel_id: exp.channel_id, year_month: exp.year_month || '2025-06', amount: +exp.amount, note: exp.note || '' })
+      await createChannelExpense({ channel_id: exp.channel_id, year_month: exp.year_month || currentPeriod(), amount: +exp.amount, note: exp.note || '' })
       toast('已记录费用'); setExp(null); load()
     } catch { toast('记录失败') }
   }
@@ -44,8 +45,8 @@ export default function Channels({ toast, backendUp }) {
   return (
     <>
       <div className="grid g4">
-        <Card className="kpi" style={{ margin: 0 }}><div className="label">累计渠道费用</div><div className="num">{stats ? wan(stats.totalCost) : '—'}</div></Card>
-        <Card className="kpi" style={{ margin: 0 }}><div className="label">人均招聘成本</div><div className="num" style={{ color: '#d97706' }}>{stats ? wan(stats.costPerHire) : '—'}</div><div className="sub">累计费用 ÷ 入职人数</div></Card>
+        <Card className="kpi" style={{ margin: 0 }}><div className="label">累计渠道费用</div><div className="num">{stats ? formatWanInt(stats.totalCost) : '—'}</div></Card>
+        <Card className="kpi" style={{ margin: 0 }}><div className="label">人均招聘成本</div><div className="num" style={{ color: '#d97706' }}>{stats ? formatWanInt(stats.costPerHire) : '—'}</div><div className="sub">累计费用 ÷ 入职人数</div></Card>
         <Card className="kpi" style={{ margin: 0 }}><div className="label">已入职</div><div className="num" style={{ color: '#10b981' }}>{stats?.hires || 0} 人</div></Card>
         <Card className="kpi" style={{ margin: 0 }}><div className="label">Offer 接受率</div><div className="num" style={{ color: '#2f54eb' }}>{stats?.acceptRate || 0}%</div></Card>
       </div>
@@ -68,11 +69,11 @@ export default function Channels({ toast, backendUp }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {c.expenses?.map(e => (
                     <span key={e.year_month} style={{ fontSize: 12 }}>
-                      {e.year_month}：{wan(e.amount)}
-                      <span style={{ color: '#dc2626', cursor: 'pointer', marginLeft: 4 }} onClick={() => delExpense(c.id, undefined)}>✕</span>
+                      {e.year_month}：{formatWanInt(e.amount)}
+                      <span style={{ color: '#dc2626', cursor: 'pointer', marginLeft: 4 }} onClick={() => delExpense(c.id, e.id)}>✕</span>
                     </span>
                   ))}
-                  <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => setExp({ channel_id: c.id, year_month: '2025-06', amount: '', note: '' })}>+ 记费用</button>
+                  <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => setExp({ channel_id: c.id, year_month: currentPeriod(), amount: '', note: '' })}>+ 记费用</button>
                 </div>
               </td>
               <td style={{ display: 'flex', gap: 6 }}>
@@ -86,7 +87,7 @@ export default function Channels({ toast, backendUp }) {
       </Card>
 
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(null)}>
+        <Modal onClose={() => setEditing(null)}>
           <div className="modal">
             <h3>{editing === 'new' ? '添加渠道' : '编辑渠道'}</h3>
             <div className="grid g2">
@@ -104,11 +105,11 @@ export default function Channels({ toast, backendUp }) {
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {exp && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setExp(null)}>
+        <Modal onClose={() => setExp(null)}>
           <div className="modal">
             <h3>记录渠道费用</h3>
             <div className="grid g2">
@@ -121,7 +122,7 @@ export default function Channels({ toast, backendUp }) {
               <Btn primary onClick={addExpense}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

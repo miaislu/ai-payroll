@@ -1,4 +1,4 @@
-# AI 薪酬管理系统 · 火山云海外服务器部署指南
+# 小公司人力管理系统 · 火山云海外服务器部署指南
 
 > 适用：火山云（Volcano Engine）海外地域服务器（如新加坡/美西等 Linux 实例）
 > 前置：已将项目代码上传到服务器（`scp -r payroll-backend payroll-react /opt/payroll/` 或 git clone），已开通 80/443 端口安全组
@@ -11,7 +11,7 @@
 |---|---|---|
 | 服务器 | 1C2G 起 | Node + SQLite，当前规模绰绰有余 |
 | 系统 | Ubuntu 20.04+/Debian 11+/CentOS 7+ | 脚本自动识别 |
-| Node | 22+ | deploy.sh 自动装（nvm） |
+| Node | 22.12+ | 需预先安装系统级 Node；deploy.sh 会校验版本 |
 | 域名 | 建议有（HTTPS 需要） | 无域名可先用 IP + HTTP 内网使用 |
 
 ## 二、部署步骤
@@ -20,14 +20,18 @@
 # 1. 上传代码（本地执行）
 scp -r payroll-backend payroll-react root@<服务器IP>:/opt/payroll/
 
-# 2. SSH 到服务器，一键部署
+# 2. SSH 到服务器，先签发证书（首次需要暂时占用 80 端口）
 ssh root@<服务器IP>
-cd /opt/payroll
-LLM_API_KEY=sk-你的Key DOMAIN=payroll.example.com bash payroll-backend/deploy/deploy.sh
+apt install -y certbot
+certbot certonly --standalone -d payroll.example.com
 
-# 3. 配置域名 DNS → 服务器 IP，然后启用 HTTPS
-apt install -y certbot python3-certbot-nginx
-certbot --nginx -d payroll.example.com
+# 3. 一键部署（密码建议用密码管理器随机生成）
+cd /opt/payroll
+DOMAIN=payroll.example.com \
+INITIAL_ADMIN_PASSWORD='替换为至少12位随机密码' \
+TLS_CERT_PATH=/etc/letsencrypt/live/payroll.example.com/fullchain.pem \
+TLS_KEY_PATH=/etc/letsencrypt/live/payroll.example.com/privkey.pem \
+bash payroll-backend/deploy/deploy.sh
 ```
 
 ## 三、海外服务器特有注意事项
@@ -58,11 +62,11 @@ certbot --nginx -d payroll.example.com
 ### 4. 安全加固（上线前必做）
 | 项 | 操作 |
 |---|---|
-| 改种子密码 | `db.js` 中 `USERS` 的 admin123/hr123/emp123 必须改 |
+| 初始账号 | 设置 `NODE_ENV=production` 与 `INITIAL_ADMIN_PASSWORD`（≥12 位）；不要设置 `DEMO_MODE=true` |
 | 安全组 | 火山云控制台仅放行 80/443/22（22 建议限定 IP） |
 | HTTPS | certbot 自动证书；HTTP 强制跳转 |
 | 限流 | 登录接口加 `express-rate-limit`（防止爆破） |
-| 数据备份 | `sqlite3 payroll.db ".backup ..."` 每日 cron |
+| 数据备份 | `sqlite3 /var/lib/payroll/payroll.db ".backup ..."` 每日 cron，并备份 `/var/lib/payroll/uploads` |
 
 ## 四、验证清单
 
@@ -70,8 +74,9 @@ certbot --nginx -d payroll.example.com
 curl http://127.0.0.1:3001/api/health          # 后端存活
 curl -X POST http://<域名>/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"hr","password":"hr123"}'     # 登录
+  -d '{"username":"<管理员用户名>","password":"<INITIAL_ADMIN_PASSWORD>"}'     # 登录
 # 浏览器打开 https://<域名> → 登录 → 总览/算薪/导出各点一遍
+# 生产环境不会创建 hr/emp 演示账号，请勿使用 hr123
 ```
 
 ## 五、回滚与运维
@@ -79,5 +84,5 @@ curl -X POST http://<域名>/api/auth/login \
 ```bash
 systemctl restart payroll-api      # 重启后端
 journalctl -u payroll-api -f       # 看日志
-cd /opt/payroll && git pull        # 更新代码后: npm run build && systemctl restart payroll-api
+cd /opt/payroll && git pull        # 更新代码后重新执行 deploy.sh，它会迁移并健康检查
 ```

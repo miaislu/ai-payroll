@@ -1,4 +1,6 @@
-// 城市政策参数表 v0.3（真实数据补录完成）
+// 城市政策参数表 v0.3（历史预览数据，正式使用前必须逐项核验）
+import './env.js'
+import { readFileSync } from 'node:fs'
 // 数据来源：
 //  - 社保基数上下限：各省市 2025 年社保缴费基数（2024 社平工资口径）汇总表
 //    https://www.rz12345.com/472.html （26 省，养老/失业/工伤/医疗统一基数）
@@ -7,6 +9,118 @@
 //  - 上海（社平 12434×60%/300%）：https://news.sohu.com/a/936465015_122270847
 // 注意：公积金基数与最低工资按城市另行规定（多数待录）；深圳为养老口径，医疗/失业等险种另见本地宝。
 export const KNOWN_CITIES = ['上海', '北京', '深圳', '苏州', '无锡', '合肥', '武汉', '成都', '西安', '杭州', '南京', '广州', '厦门']
+
+/** 未核验城市时的估算费率；只能用于预览，不能用于正式月结。 */
+export const DEFAULT_RATES = {
+  personal_pension_rate: 0.08,
+  personal_medical_rate: 0.02,
+  personal_unemployment_rate: 0.003,
+  personal_social_rate: 0.103,
+  employer_social_rate: 0.26,
+  personal_fund_rate: 0.07,
+  employer_fund_rate: 0.07
+}
+
+let configuredCache
+function configuredPolicies() {
+  if (configuredCache !== undefined) return configuredCache
+  const filename = String(process.env.CITY_POLICY_FILE || '').trim()
+  if (!filename) return (configuredCache = [])
+  let parsed
+  try { parsed = JSON.parse(readFileSync(filename, 'utf8')) } catch (error) {
+    throw new Error(`CITY_POLICY_FILE 无法读取或不是合法 JSON：${error.message}`)
+  }
+  const rows = Array.isArray(parsed) ? parsed : parsed?.policies
+  if (!Array.isArray(rows) || !rows.length) throw new Error('CITY_POLICY_FILE 必须包含非空 policies 数组')
+  const requiredNumbers = [
+    'social_base_min', 'social_base_max', 'fund_min', 'fund_max',
+    'personal_pension_rate', 'personal_medical_rate', 'personal_unemployment_rate',
+    'personal_social_rate', 'employer_social_rate', 'personal_fund_rate', 'employer_fund_rate',
+    'min_wage', 'local_avg_monthly_wage'
+  ]
+  for (const [index, row] of rows.entries()) {
+    const validPeriod = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ''))
+    if (!row || row.verified !== true || !String(row.city || '').trim() || !validPeriod(row.effective_from) || !validPeriod(row.effective_to) || row.effective_from > row.effective_to || !String(row.source || '').trim()) {
+      throw new Error(`CITY_POLICY_FILE policies[${index}] 缺少 verified=true、城市、有效期或来源`)
+    }
+    if (requiredNumbers.some(key => !Number.isFinite(Number(row[key])) || Number(row[key]) < 0)) throw new Error(`CITY_POLICY_FILE policies[${index}] 数值字段不完整`)
+    if (Number(row.social_base_min) > Number(row.social_base_max) || Number(row.fund_min) > Number(row.fund_max)) throw new Error(`CITY_POLICY_FILE policies[${index}] 基数上下限颠倒`)
+    for (const key of ['social_base_min', 'social_base_max', 'fund_min', 'fund_max', 'min_wage', 'local_avg_monthly_wage']) {
+      if (Number(row[key]) <= 0) throw new Error(`CITY_POLICY_FILE policies[${index}].${key} 必须大于 0`)
+    }
+    for (const key of ['personal_pension_rate', 'personal_medical_rate', 'personal_unemployment_rate', 'personal_social_rate', 'employer_social_rate', 'personal_fund_rate', 'employer_fund_rate']) if (Number(row[key]) > 1) throw new Error(`CITY_POLICY_FILE policies[${index}].${key} 必须在 0-1`)
+    const personalSocialParts = Number(row.personal_pension_rate) + Number(row.personal_medical_rate) + Number(row.personal_unemployment_rate)
+    if (Math.abs(personalSocialParts - Number(row.personal_social_rate)) > 0.000001) {
+      throw new Error(`CITY_POLICY_FILE policies[${index}] 个人养老、医疗、失业费率之和必须等于 personal_social_rate`)
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      if (rows[i].city === rows[j].city && rows[i].effective_from <= rows[j].effective_to && rows[j].effective_from <= rows[i].effective_to) {
+        throw new Error(`CITY_POLICY_FILE 中 ${rows[i].city} 存在重叠有效期`)
+      }
+    }
+  }
+  configuredCache = rows.map(row => ({ ...row, year: Number(row.year || row.effective_from.slice(0, 4)) }))
+  return configuredCache
+}
+
+function capBase(amount, min, max) {
+  let b = Number(amount) || 0
+  if (min != null && b < min) b = min
+  if (max != null && b > max) b = max
+  return b
+}
+
+/**
+ * 按账期读取城市政策。现有 2025 数据仅供预览，尚未包含逐险种官方费率核验，
+ * 因此 verified=false；未知或过期参数绝不伪装成可用于正式月结的政策。
+ */
+export function getCityPolicy(city = '上海', period = null) {
+  const wanted = period || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+  const p = [...configuredPolicies(), ...CITY_POLICIES].find(x => x.city === city && wanted >= (x.effective_from || `${x.year}-01`) && wanted <= (x.effective_to || `${x.year}-12`)) || null
+  const complete = Boolean(
+    p?.verified && p.social_base_min != null && p.social_base_max != null && p.fund_min != null && p.fund_max != null &&
+    p.personal_pension_rate != null && p.personal_medical_rate != null && p.personal_unemployment_rate != null &&
+    p.personal_social_rate != null && p.employer_social_rate != null && p.personal_fund_rate != null &&
+    p.employer_fund_rate != null && p.min_wage != null && p.local_avg_monthly_wage != null
+  )
+  return {
+    city,
+    year: p?.year || Number(wanted.slice(0, 4)),
+    found: Boolean(p),
+    social_base_min: p?.social_base_min ?? null,
+    social_base_max: p?.social_base_max ?? null,
+    effective_from: p?.effective_from || (p ? `${p.year}-01` : null),
+    effective_to: p?.effective_to || (p ? `${p.year}-12` : null),
+    verified: Boolean(p?.verified),
+    payroll_ready: complete,
+    fund_min: p?.fund_min ?? null,
+    fund_max: p?.fund_max ?? null,
+    personal_pension_rate: p?.personal_pension_rate ?? DEFAULT_RATES.personal_pension_rate,
+    personal_medical_rate: p?.personal_medical_rate ?? DEFAULT_RATES.personal_medical_rate,
+    personal_unemployment_rate: p?.personal_unemployment_rate ?? DEFAULT_RATES.personal_unemployment_rate,
+    personal_social_rate: p?.personal_social_rate ?? DEFAULT_RATES.personal_social_rate,
+    employer_social_rate: p?.employer_social_rate ?? DEFAULT_RATES.employer_social_rate,
+    personal_fund_rate: p?.personal_fund_rate ?? DEFAULT_RATES.personal_fund_rate,
+    employer_fund_rate: p?.employer_fund_rate ?? DEFAULT_RATES.employer_fund_rate,
+    min_wage: p?.min_wage ?? null,
+    local_avg_monthly_wage: p?.local_avg_monthly_wage ?? null,
+    fund_rate: p?.fund_rate ?? null,
+    source: p?.source ?? null,
+    note: p?.note ?? (p ? null : `该城市在 ${wanted} 没有有效政策参数；当前结果仅为估算，禁止正式月结。`)
+  }
+}
+
+export function capSocialBase(amount, city = '上海', period = null) {
+  const p = getCityPolicy(city, period)
+  return capBase(amount, p.social_base_min, p.social_base_max)
+}
+
+export function capFundBase(amount, city = '上海', period = null) {
+  const p = getCityPolicy(city, period)
+  return capBase(amount, p.fund_min, p.fund_max)
+}
 
 export const CITY_POLICIES = [
   {
@@ -109,17 +223,21 @@ export function detectCity(question) {
 
 // 构造城市政策上下文块（注入 RAG）
 export function cityContext(city) {
-  const p = CITY_POLICIES.find(x => x.city === city)
-  if (!p) return `[城市参数] ${city}：该城市未收录政策参数，需人工核实。`
+  const p = getCityPolicy(city)
+  if (!p.found) return `[城市参数] ${city}：该城市当前账期没有已收录且有效的政策参数，正式计算前需人工核验。`
   const fields = []
   if (p.social_base_min) fields.push(`社保基数下限 ${p.social_base_min} 元/月`)
   if (p.social_base_max) fields.push(`社保基数上限 ${p.social_base_max} 元/月`)
   if (p.fund_min) fields.push(`公积金下限 ${p.fund_min} 元/月`)
   if (p.fund_max) fields.push(`公积金上限 ${p.fund_max} 元/月`)
-  if (p.fund_rate) fields.push(`公积金比例 ${p.fund_rate}`)
+  fields.push(`个人社保 ${(p.personal_social_rate * 100).toFixed(1)}%`)
+  fields.push(`公司社保 ${(p.employer_social_rate * 100).toFixed(0)}%`)
+  fields.push(`公积金个人/公司 ${(p.personal_fund_rate * 100).toFixed(0)}%/${(p.employer_fund_rate * 100).toFixed(0)}%`)
+  if (p.fund_rate) fields.push(`公积金政策口径 ${p.fund_rate}`)
   if (p.min_wage) fields.push(`最低工资 ${p.min_wage} 元/月`)
   const known = fields.length ? `（${fields.join('，')}）` : '（暂无数值）'
   const gap = p.note ? ` 注意：${p.note}` : ''
   const src = p.source ? ` 来源：${p.source}` : ''
-  return `[城市参数] ${city} ${p.year}：${known}${gap}${src}`
+  const readiness = p.payroll_ready ? '已完成正式核验' : '历史预览数据，未完成正式核验，不得直接用于申报或发薪'
+  return `[城市参数] ${city} ${p.year}：${known}；${readiness}${gap}${src}`
 }

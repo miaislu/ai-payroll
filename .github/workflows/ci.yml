@@ -18,11 +18,10 @@ jobs:
             payroll-react/package-lock.json
       - name: Backend install and test
         working-directory: payroll-backend
-        run: npm ci && npm test
-      - name: Frontend install and build
+        run: npm ci && npm run check && npm audit --omit=dev --audit-level=high
+      - name: Frontend install, test and build
         working-directory: payroll-react
-        run: npm ci && npm run build
+        run: npm ci && npm test && npm run build && npm audit --audit-level=high
       - name: Benchmark structural validation
         working-directory: benchmark-data
         run: python3 validate_benchmark.py benchmark-dataset.json /tmp/validation-report.md
-

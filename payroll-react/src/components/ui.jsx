@@ -32,3 +32,11 @@ export const Kpi = ({ label, num, sub, numColor }) => (
 export const Field = ({ label, children }) => (
   <label className="f">{label}{children}</label>
 )
+
+export function Modal({ onClose, children }) {
+  return (
+    <div className="modal-bg show" onClick={e => e.currentTarget === e.target && onClose?.()}>
+      {children}
+    </div>
+  )
+}

@@ -1,5 +1,6 @@
 // 表单校验白名单（CRUD 用）
 import { DIRECTIONS } from './data-shim.js'
+import { isDate, isPeriod } from './periods.js'
 
 // 员工可选岗位（技术岗 = 对标库方向；职能/管理岗为独立清单）
 export const DIRECTIONS_KEYS = Object.keys(DIRECTIONS)
@@ -36,6 +37,9 @@ export function validateEmployee(body) {
   if (!Number.isFinite(e.perf_ratio) || e.perf_ratio < 0 || e.perf_ratio > 1) errors.push('绩效比例须在 0-1 之间')
   e.special_deduction = Math.round(Number(body.special_deduction) || 0)
   if (e.special_deduction < 0 || e.special_deduction > 10000) errors.push('专项附加扣除须在 0-10000 之间')
-  e.hire_month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(body.hire_month || '')) ? body.hire_month : '2025-01'
+  const hireDate = String(body.hire_date || (isPeriod(body.hire_month) ? `${body.hire_month}-01` : ''))
+  if (!isDate(hireDate)) errors.push('入职日期必填且须为有效的 YYYY-MM-DD')
+  e.hire_date = isDate(hireDate) ? hireDate : null
+  e.hire_month = e.hire_date?.slice(0, 7) || null
   return { errors, e }
 }

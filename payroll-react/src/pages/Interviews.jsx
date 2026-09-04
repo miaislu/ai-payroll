@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getInterviews, createInterview, updateInterview, deleteInterview, getCandidates } from '../api.js'
 
 const EMPTY = { candidate_id: null, round_no: 1, interviewer: '', result: 'pending', score: '', notes: '' }
@@ -63,7 +63,7 @@ export default function Interviews({ toast, backendUp }) {
       </Card>
 
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(null)}>
+        <Modal onClose={() => setEditing(null)}>
           <div className="modal" style={{ width: 520 }}>
             <h3>{editing === 'new' ? '记录面试' : '编辑面试'}</h3>
             <div className="grid g2">
@@ -89,7 +89,7 @@ export default function Interviews({ toast, backendUp }) {
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

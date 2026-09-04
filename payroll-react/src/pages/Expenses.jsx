@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getExpenseClaims, createExpenseClaim, expenseClaimAction, deleteExpenseClaim, getAdvances, createAdvance, advanceAction, deleteAdvance } from '../api.js'
+import { CAN_FINANCE } from '../data.js'
 
 const EXPENSE_TYPES = ['差旅', '餐饮', '交通', '办公', '招待', '其他']
 const CLAIM_STATUS = { submitted: ['待审批', 'warn'], approved: ['已通过', 'ok'], rejected: ['已驳回', 'bad'], paid: ['已打款', 'info'], draft: ['草稿', 'gray'] }
 const ADV_STATUS = { submitted: ['待审批', 'warn'], approved: ['已发放', 'ok'], repaid: ['已还款', 'info'], cleared: ['已核销', 'gray'], rejected: ['已驳回', 'bad'] }
-const wan = v => '¥' + Number(v).toLocaleString('zh-CN')
 const CLAIM_EMPTY = { expense_type: '差旅', amount: '', claim_date: new Date().toISOString().slice(0, 10), description: '', advance_offset: 0 }
 const ADV_EMPTY = { amount: '', reason: '', advance_date: new Date().toISOString().slice(0, 10) }
 
 export default function Expenses({ toast, backendUp, user }) {
-  const isAdmin = user?.role === 'hr' || user?.role === 'founder'
+  const canAct = CAN_FINANCE(user?.role)
   const [claims, setClaims] = useState(null)
   const [advances, setAdvances] = useState(null)
   const [claimForm, setClaimForm] = useState(null) // 打开报销表单
@@ -56,13 +56,13 @@ export default function Expenses({ toast, backendUp, user }) {
     <>
       <div className="grid g3">
         <Card className="kpi" style={{ margin: 0 }}><div className="label">待审批报销</div><div className="num" style={{ color: '#d97706' }}>{claims?.filter(c => c.status === 'submitted').length || 0} 笔</div></Card>
-        <Card className="kpi" style={{ margin: 0 }}><div className="label">本月报销合计</div><div className="num">{wan((claims || []).filter(c => c.status !== 'rejected').reduce((s, c) => s + c.amount, 0))}</div></Card>
-        <Card className="kpi" style={{ margin: 0 }}><div className="label">未核销预支</div><div className="num" style={{ color: '#dc2626' }}>{wan((advances || []).reduce((s, a) => s + (a.outstanding || 0), 0))}</div></Card>
+        <Card className="kpi" style={{ margin: 0 }}><div className="label">本月报销合计</div><div className="num">{formatYuan((claims || []).filter(c => c.status !== 'rejected').reduce((s, c) => s + c.amount, 0))}</div></Card>
+        <Card className="kpi" style={{ margin: 0 }}><div className="label">未核销预支</div><div className="num" style={{ color: '#dc2626' }}>{formatYuan((advances || []).reduce((s, a) => s + (a.outstanding || 0), 0))}</div></Card>
       </div>
 
       <Card title={<>报销单 <Chip kind="info">{claims?.length || 0} 笔</Chip></>} style={{ marginTop: 14 }}>
         <div className="toolbar">
-          <Hint>提交报销 → 审批（可核销预支）→ 打款；费用类型：差旅/餐饮/交通/办公/招待/其他</Hint>
+          <Hint>提交报销 → 财务或 CEO 审批（可核销预支）→ 打款</Hint>
           <div style={{ flex: 1 }} />
           <Btn primary onClick={() => setClaimForm(CLAIM_EMPTY)}>+ 提交报销</Btn>
         </div>
@@ -72,18 +72,18 @@ export default function Expenses({ toast, backendUp, user }) {
             <tr key={c.id}>
               <td><b>{c.employee_name}</b></td>
               <td><Chip kind="info">{c.expense_type}</Chip></td>
-              <td style={{ fontWeight: 600 }}>{wan(c.amount)}</td>
+              <td style={{ fontWeight: 600 }}>{formatYuan(c.amount)}</td>
               <td>{c.claim_date}</td>
               <td className="hint">{c.description || '—'}</td>
-              <td>{c.advance_offset > 0 ? wan(c.advance_offset) : '—'}</td>
+              <td>{c.advance_offset > 0 ? formatYuan(c.advance_offset) : '—'}</td>
               <td><Chip kind={claimStatus(c.status)[1]}>{claimStatus(c.status)[0]}</Chip></td>
               <td>
-                {isAdmin && c.status === 'submitted' ? (
+                {canAct && c.status === 'submitted' ? (
                   <span style={{ display: 'flex', gap: 4 }}>
                     <Btn sm onClick={() => actClaim(c, 'approve')}>通过</Btn>
                     <Btn sm onClick={() => actClaim(c, 'reject')}>驳回</Btn>
                   </span>
-                ) : isAdmin && c.status === 'approved' ? (
+                ) : canAct && c.status === 'approved' ? (
                   <Btn sm onClick={() => actClaim(c, 'pay')}>打款</Btn>
                 ) : c.status === 'approved' ? (
                   <span className="hint">{c.approver} · {c.approved_at?.slice(0, 10)}</span>
@@ -107,18 +107,18 @@ export default function Expenses({ toast, backendUp, user }) {
           {advances?.map(a => (
             <tr key={a.id}>
               <td><b>{a.employee_name}</b></td>
-              <td style={{ fontWeight: 600 }}>{wan(a.amount)}</td>
+              <td style={{ fontWeight: 600 }}>{formatYuan(a.amount)}</td>
               <td className="hint">{a.reason || '—'}</td>
               <td>{a.advance_date}</td>
-              <td style={{ color: (a.outstanding || 0) > 0 ? '#dc2626' : '#10b981' }}>{wan(a.outstanding || 0)}</td>
+              <td style={{ color: (a.outstanding || 0) > 0 ? '#dc2626' : '#10b981' }}>{formatYuan(a.outstanding || 0)}</td>
               <td><Chip kind={advStatus(a.status)[1]}>{advStatus(a.status)[0]}</Chip></td>
               <td>
-                {isAdmin && a.status === 'submitted' ? (
+                {canAct && a.status === 'submitted' ? (
                   <span style={{ display: 'flex', gap: 4 }}>
                     <Btn sm onClick={() => actAdv(a, 'approve')}>发放</Btn>
                     <Btn sm onClick={() => actAdv(a, 'reject')}>驳回</Btn>
                   </span>
-                ) : isAdmin && a.status === 'approved' ? (
+                ) : canAct && a.status === 'approved' ? (
                   <Btn sm onClick={() => actAdv(a, 'repay')}>还款结清</Btn>
                 ) : <span className="hint">{a.approver || '—'}</span>}
               </td>
@@ -130,7 +130,7 @@ export default function Expenses({ toast, backendUp, user }) {
       </Card>
 
       {claimForm && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setClaimForm(null)}>
+        <Modal onClose={() => setClaimForm(null)}>
           <div className="modal" style={{ width: 520 }}>
             <h3>提交报销</h3>
             <div className="grid g2">
@@ -149,11 +149,11 @@ export default function Expenses({ toast, backendUp, user }) {
               <Btn primary onClick={submitClaim}>提交</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {advForm && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdvForm(null)}>
+        <Modal onClose={() => setAdvForm(null)}>
           <div className="modal">
             <h3>申请预支</h3>
             <div className="grid g2">
@@ -166,7 +166,7 @@ export default function Expenses({ toast, backendUp, user }) {
               <Btn primary onClick={submitAdv}>提交</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

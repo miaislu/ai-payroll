@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getDepartments, createDepartment, getOrgOverview } from '../api.js'
 
 export default function Org({ toast, backendUp }) {
@@ -62,7 +62,7 @@ export default function Org({ toast, backendUp }) {
       </Card>
 
       {adding && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdding(false)}>
+        <Modal onClose={() => setAdding(false)}>
           <div className="modal">
             <h3>添加部门</h3>
             <div className="grid g2">
@@ -81,7 +81,7 @@ export default function Org({ toast, backendUp }) {
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

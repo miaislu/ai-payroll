@@ -1,17 +1,5 @@
 // LLM 客户端：OpenAI 兼容 chat/completions，默认 DeepSeek，可用 .env 切换任意兼容端点
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-// 轻量 .env 加载（Node 无内置，避免 --env-file 兼容问题）
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-try {
-  const envPath = path.join(__dirname, '..', '.env')
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch { /* 无 .env 文件则仅用环境变量 */ }
+import './env.js'
 
 export const LLM_BASE = (process.env.LLM_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '')
 export const LLM_KEY = process.env.LLM_API_KEY || ''

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getCandidatesKanban, getRequisitions, createCandidate, setCandidateStage, updateCandidate, getOfferSuggest, getInterviews, createInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, deleteCandidateResume, downloadCandidateResume } from '../api.js'
 import { CANDIDATE_STAGES } from '../data.js'
 
@@ -131,7 +131,7 @@ export default function Candidates({ toast, backendUp, goto }) {
     try { await deleteCandidateResume(detail.id); toast('已删除'); const fresh = await getCandidatesKanban(); setKanban(fresh); setDetail(fresh.flatMap(g => g.items).find(x => x.id === detail.id)) }
     catch { toast('删除失败') }
   }
-  // 发起 Offer 审批（进入审批中心，创始人审批后 offer_status=approved）
+  // 发起 Offer 审批（进入审批中心，HR 或 CEO 同意后 offer_status=approved）
   const doOfferApproval = async () => {
     if (!detail) return
     try {
@@ -187,7 +187,7 @@ export default function Candidates({ toast, backendUp, goto }) {
       </Card>
 
       {adding && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdding(false)}>
+        <Modal onClose={() => setAdding(false)}>
           <div className="modal" style={{ width: 520 }}>
             <h3>添加候选人</h3>
             <div className="grid g2">
@@ -212,11 +212,11 @@ export default function Candidates({ toast, backendUp, goto }) {
               <Btn primary onClick={saveNew}>添加</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {detail && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setDetail(null)}>
+        <Modal onClose={() => setDetail(null)}>
           <div className="modal" style={{ width: 640, maxHeight: '86vh', overflowY: 'auto' }}>
             <h3>{detail.name} <Chip kind="gray" style={{}}>{stageLabel(detail.stage)}</Chip></h3>
             <div className="grid g2" style={{ fontSize: 13 }}>
@@ -229,14 +229,14 @@ export default function Candidates({ toast, backendUp, goto }) {
             </div>
             {detail.reject_reason && <div className="hint" style={{ marginTop: 8, color: '#dc2626' }}>淘汰原因：{detail.reject_reason}</div>}
 
-            {/* Offer 定薪建议：引用对标带宽 */}
+            {/* Offer 参考：只展示已审批的原始基准，不做无来源系数外推 */}
             {suggest && (
               <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}>
-                <b style={{ fontSize: 13 }}>🎯 定薪建议（{suggest.job_family} · {suggest.city}）</b>
+                <b style={{ fontSize: 13 }}>🎯 已审批参考带宽（{suggest.job_family}）</b>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginTop: 8 }}>
-                  <div><span className="hint">带宽 P25/P50/P75</span><br /><b>{suggest.adjusted.p25} / {suggest.adjusted.p50} / {suggest.adjusted.p75} 万</b></div>
-                  <div><span className="hint">建议区间</span><br /><b>{suggest.suggestion.range}</b></div>
-                  <div><span className="hint">当前分位</span><br /><b style={{ color: suggest.current?.positionLabel === '超出带宽' ? '#dc2626' : '#10b981' }}>{suggest.current?.position}%（{suggest.current?.positionLabel}）</b></div>
+                  <div><span className="hint">基准口径</span><br /><b>{suggest.scope}</b></div>
+                  <div><span className="hint">P25/P50/P75</span><br /><b>{suggest.baseline.p25} / {suggest.baseline.p50} / {suggest.baseline.p75} 万</b></div>
+                  <div><span className="hint">相对基准位置</span><br /><b style={{ color: suggest.current?.positionLabel === '超出带宽' ? '#dc2626' : '#10b981' }}>{suggest.current?.position ?? '—'}{suggest.current?.position != null ? `%（${suggest.current.positionLabel}）` : ''}</b></div>
                 </div>
                 <div className="hint" style={{ marginTop: 6 }}>{suggest.note}</div>
               </div>
@@ -314,12 +314,12 @@ export default function Candidates({ toast, backendUp, goto }) {
               <Btn onClick={() => setDetail(null)}>关闭</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* 简历解析结果预览 */}
       {resumePreview && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setResumePreview(null)}>
+        <Modal onClose={() => setResumePreview(null)}>
           <div className="modal" style={{ width: 620, maxHeight: '86vh', overflowY: 'auto' }}>
             <h3>🤖 AI 解析结果 · {detail?.name}</h3>
             {resumePreview.engine && <Hint>解析引擎：{resumePreview.engine}{resumePreview.job_family ? ` · 岗位族「${resumePreview.job_family}」` : ''}{resumePreview.experience_years != null ? ` · ${resumePreview.experience_years} 年经验` : ''}</Hint>}
@@ -347,7 +347,7 @@ export default function Candidates({ toast, backendUp, goto }) {
               <Btn onClick={() => setResumePreview(null)}>关闭</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

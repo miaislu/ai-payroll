@@ -3,8 +3,8 @@ import { Card, Chip, Hint, Kpi } from '../components/ui.jsx'
 import Chart from '../components/Chart.jsx'
 import { getRecruitingStats, getRequisitions } from '../api.js'
 import { CANDIDATE_STAGES, REQUISITION_STATUS } from '../data.js'
+import { formatWanInt } from '../lib/format.js'
 
-const wan = v => '¥' + (Math.round(v / 100) / 100).toFixed(0) + '万'
 
 export default function Recruiting({ toast, backendUp, goto }) {
   const [stats, setStats] = useState(null)
@@ -29,7 +29,7 @@ export default function Recruiting({ toast, backendUp, goto }) {
     <>
       <div className="grid g4">
         <Kpi label="进行中需求" num={openReqs.length} sub="开放 + 面试中" numColor="#2f54eb" />
-        <Kpi label="人均招聘成本" num={stats ? wan(stats.costPerHire) : '—'} sub={`累计渠道费用 ${stats ? wan(stats.totalCost) : '—'}`} numColor="#d97706" />
+        <Kpi label="人均招聘成本" num={stats ? formatWanInt(stats.costPerHire) : '—'} sub={`累计渠道费用 ${stats ? formatWanInt(stats.totalCost) : '—'}`} numColor="#d97706" />
         <Kpi label="平均招聘周期" num={stats ? stats.avgCycle + ' 天' : '—'} sub="申请 → 入职" numColor="#7c3aed" />
         <Kpi label="Offer 接受率" num={stats ? stats.acceptRate + '%' : '—'} sub={`入职 ${stats?.hires || 0} 人`} numColor="#10b981" />
       </div>
@@ -64,8 +64,8 @@ export default function Recruiting({ toast, backendUp, goto }) {
               <td><b>{c.name}</b></td>
               <td>{c.candidates}</td>
               <td><Chip kind="ok">{c.hired}</Chip></td>
-              <td>{c.cost ? wan(c.cost) : '—'}</td>
-              <td>{c.costPerHire ? wan(c.costPerHire) : '—'}</td>
+              <td>{c.cost ? formatWanInt(c.cost) : '—'}</td>
+              <td>{c.costPerHire ? formatWanInt(c.costPerHire) : '—'}</td>
             </tr>
           ))}
           {stats && !stats.channels.length && <tr><td colSpan={5}><Hint>暂无渠道数据</Hint></td></tr>}

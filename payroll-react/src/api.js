@@ -1,17 +1,12 @@
-// API 客户端：对接 payroll-backend（后端未启动时调用方自行回退到本地演示数据）
+// API 客户端：浏览器仅使用 HttpOnly 会话 Cookie，不在 JavaScript 中保存凭证。
 const BASE = '/api'
-let token = sessionStorage.getItem('payroll_token') || ''
-export const setToken = t => { token = t; if (t) sessionStorage.setItem('payroll_token', t); else sessionStorage.removeItem('payroll_token') }
-export const getToken = () => token
 
-export async function api(path, { method = 'GET', body, auth = true } = {}) {
+export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(BASE + path, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(auth && token ? { Authorization: 'Bearer ' + token } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
+    credentials: 'include',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
   })
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))
@@ -20,31 +15,49 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
   return res.json()
 }
 
+export async function downloadPayrollExport(period, type) {
+  const res = await fetch(BASE + `/payroll/${period}/export/${type}`, {
+    credentials: 'include',
+    headers: {}
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(detail.error || '导出失败')
+  }
+  return res.blob()
+}
+
 // 后端是否可用（供前端降级提示）
 export async function checkBackend() {
   try {
-    const r = await fetch(BASE + '/health')
+    const r = await fetch(BASE + '/health', { credentials: 'include' })
     return r.ok
   } catch { return false }
 }
 
-export const login = (username, password) => api('/auth/login', { method: 'POST', body: { username, password }, auth: false })
+export const login = (username, password) => api('/auth/login', { method: 'POST', body: { username, password } })
+export const getMe = () => api('/auth/me')
 export const logout = () => api('/auth/logout', { method: 'POST', body: {} })
+export const getUsers = () => api('/users')
+export const createUser = body => api('/users', { method: 'POST', body })
+export const resetUserPassword = (id, password) => api('/users/' + id + '/reset-password', { method: 'POST', body: { password } })
+export const deleteUser = id => api('/users/' + id, { method: 'DELETE' })
+export const getAuditLogs = (limit = 100) => api('/audit-logs?limit=' + limit)
 export const getEmployees = () => api('/employees')
 export const createEmployee = body => api('/employees', { method: 'POST', body })
 export const updateEmployee = (id, body) => api('/employees/' + id, { method: 'PUT', body })
 export const deleteEmployee = id => api('/employees/' + id, { method: 'DELETE' })
 export const getApprovals = () => api('/approvals')
-export const approvalAction = (id, action, key, comment) => api('/approvals/' + id + '/action', { method: 'POST', body: { action, key, comment } })
+export const approvalAction = (id, action, key, comment, extra = {}) => api('/approvals/' + id + '/action', { method: 'POST', body: { action, key, comment, ...extra } })
+export const createApproval = body => api('/approvals', { method: 'POST', body })
 export const getBenchmarkDirections = () => api('/benchmarks/directions')
 export const getBenchmarkCard = params => api('/benchmarks?' + new URLSearchParams(params).toString())
 export const getPayroll = period => api('/payroll/' + period)
 export const submitPayroll = period => api('/payroll/' + period + '/submit', { method: 'POST', body: {} })
-export const askCopilot = (question, sessionId) => api('/copilot/ask', { method: 'POST', body: { question, sessionId } })
+export const askCopilot = (question, sessionId, allowExternal = false) => api('/copilot/ask', { method: 'POST', body: { question, sessionId, allow_external: allowExternal } })
 export const clearCopilot = sessionId => api('/copilot/clear', { method: 'POST', body: { sessionId } })
+export const getCopilotConfig = () => api('/copilot/config')
 export const getPayslipMe = () => api('/payslip/me')
-
-// ── v2：组织架构 ──
 export const getDepartments = () => api('/departments')
 export const createDepartment = body => api('/departments', { method: 'POST', body })
 export const updateDepartment = (id, body) => api('/departments/' + id, { method: 'PUT', body })
@@ -78,7 +91,8 @@ export const uploadResume = (id, file) => {
   fd.append('resume', file)
   return fetch(BASE + '/employees/' + id + '/resume', {
     method: 'POST',
-    headers: token ? { Authorization: 'Bearer ' + token } : {},
+    credentials: 'include',
+    headers: {},
     body: fd
   }).then(async r => {
     if (!r.ok) throw new Error('上传失败 ' + r.status)
@@ -89,7 +103,7 @@ export const parseResume = (id, rid, allowExternal = false) => api('/employees/'
 export const applyResume = (id, rid) => api('/employees/' + id + '/resume/' + rid + '/apply', { method: 'POST', body: {} })
 export const deleteResume = (id, rid) => api('/employees/' + id + '/resume/' + rid, { method: 'DELETE' })
 export const downloadAuthenticated = async (path, filename) => {
-  const res = await fetch(BASE + path, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+  const res = await fetch(BASE + path, { credentials: 'include' })
   if (!res.ok) throw new Error('下载失败 ' + res.status)
   const url = URL.createObjectURL(await res.blob())
   const a = document.createElement('a')
@@ -130,7 +144,8 @@ export const uploadCandidateResume = (id, file) => {
   fd.append('resume', file)
   return fetch(BASE + '/recruiting/candidates/' + id + '/resume', {
     method: 'POST',
-    headers: token ? { Authorization: 'Bearer ' + token } : {},
+    credentials: 'include',
+    headers: {},
     body: fd
   }).then(async r => {
     if (!r.ok) throw new Error('上传失败 ' + r.status)
@@ -173,3 +188,13 @@ export const getAdvances = () => api('/expense/advances')
 export const createAdvance = body => api('/expense/advances', { method: 'POST', body })
 export const advanceAction = (id, body) => api('/expense/advances/' + id + '/action', { method: 'POST', body })
 export const deleteAdvance = id => api('/expense/advances/' + id, { method: 'DELETE' })
+
+export const getAttendance = period => api('/attendance?period=' + encodeURIComponent(period))
+export const saveAttendance = body => api('/attendance', { method: 'PUT', body })
+export const getPerformance = cycle => api('/performance?cycle=' + encodeURIComponent(cycle))
+export const savePerformance = body => api('/performance', { method: 'POST', body })
+export const deletePerformance = id => api('/performance/' + id, { method: 'DELETE' })
+export const raiseFromPerformance = id => api('/performance/' + id + '/raise', { method: 'POST', body: {} })
+export const getMarketSummary = () => api('/market/summary')
+export const ingestMarket = body => api('/market/ingest', { method: 'POST', body })
+export const draftBand = body => api('/market/draft-band', { method: 'POST', body })

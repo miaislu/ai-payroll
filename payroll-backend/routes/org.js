@@ -1,12 +1,26 @@
 // 组织架构：部门树 + 员工入转调离事件
 import { Router } from 'express'
-import { db } from '../db.js'
+import { audit, db, inTransaction } from '../db.js'
 import { auth } from '../lib/auth.js'
+import { canReadEmployeeEvents } from '../lib/access.js'
+import { isDate } from '../lib/periods.js'
 
 export const org = Router()
 
 // 写操作统一限 hr/founder
 const admin = auth(['hr', 'founder'])
+const EVENT_TYPES = ['onboard', 'regularize', 'promotion', 'transfer', 'offboard']
+
+function validDepartmentParent(id, parentId) {
+  if (parentId == null) return true
+  if (!db.prepare('SELECT id FROM departments WHERE id=?').get(parentId)) return false
+  if (id == null) return true
+  if (Number(id) === Number(parentId)) return false
+  return !db.prepare(`WITH RECURSIVE descendants(id) AS (
+    SELECT id FROM departments WHERE parent_id=?
+    UNION ALL SELECT d.id FROM departments d JOIN descendants x ON d.parent_id=x.id
+  ) SELECT 1 FROM descendants WHERE id=?`).get(id, parentId)
+}
 
 // ── 部门 ──
 org.get('/departments', (req, res) => {
@@ -26,16 +40,25 @@ org.get('/departments', (req, res) => {
 
 org.post('/departments', admin, (req, res) => {
   const { name, parent_id = null, head = '', budget_owner = '' } = req.body || {}
-  if (!name) return res.status(400).json({ error: '缺少部门名称' })
-  const r = db.prepare('INSERT INTO departments(name,parent_id,head,budget_owner) VALUES(?,?,?,?)').run(name, parent_id, head, budget_owner)
+  const cleanName = String(name || '').trim()
+  const parentId = parent_id == null || parent_id === '' ? null : Number(parent_id)
+  if (!cleanName || cleanName.length > 80) return res.status(400).json({ error: '部门名称须为 1-80 字' })
+  if (!validDepartmentParent(null, parentId)) return res.status(400).json({ error: '上级部门不存在' })
+  const r = db.prepare('INSERT INTO departments(name,parent_id,head,budget_owner) VALUES(?,?,?,?)').run(cleanName, parentId, String(head).slice(0, 80), String(budget_owner).slice(0, 80))
+  audit(req.user, 'create', 'department', r.lastInsertRowid, null, db.prepare('SELECT * FROM departments WHERE id=?').get(r.lastInsertRowid))
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 
 org.put('/departments/:id', admin, (req, res) => {
   const { name, parent_id, head, budget_owner } = req.body || {}
+  const before = db.prepare('SELECT * FROM departments WHERE id=?').get(req.params.id)
+  if (!before) return res.status(404).json({ error: '部门不存在' })
+  const parentId = parent_id == null || parent_id === '' ? null : Number(parent_id)
+  if (!validDepartmentParent(req.params.id, parentId)) return res.status(400).json({ error: '上级部门不存在，或会形成循环层级' })
+  if (name !== undefined && (!String(name).trim() || String(name).trim().length > 80)) return res.status(400).json({ error: '部门名称须为 1-80 字' })
   const r = db.prepare('UPDATE departments SET name=COALESCE(?,name), parent_id=?, head=COALESCE(?,head), budget_owner=COALESCE(?,budget_owner) WHERE id=?')
-    .run(name || null, parent_id ?? null, head || null, budget_owner || null, req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '部门不存在' })
+    .run(name === undefined ? null : String(name).trim(), parentId, head === undefined ? null : String(head).slice(0, 80), budget_owner === undefined ? null : String(budget_owner).slice(0, 80), req.params.id)
+  audit(req.user, 'update', 'department', req.params.id, before, db.prepare('SELECT * FROM departments WHERE id=?').get(req.params.id))
   res.json({ ok: true, id: Number(req.params.id) })
 })
 
@@ -49,27 +72,38 @@ org.delete('/departments/:id', admin, (req, res) => {
     const count = db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE department_id=?`).get(id).c
     if (count > 0) return res.status(409).json({ error: `该部门仍关联 ${count} 条${label}，请先迁移或关闭` })
   }
-  const r = db.prepare('DELETE FROM departments WHERE id=?').run(id)
-  if (!r.changes) return res.status(404).json({ error: '部门不存在' })
+  const before = db.prepare('SELECT * FROM departments WHERE id=?').get(id)
+  if (!before) return res.status(404).json({ error: '部门不存在' })
+  inTransaction(() => {
+    db.prepare('DELETE FROM departments WHERE id=?').run(id)
+    audit(req.user, 'delete', 'department', id, before, null)
+  })
   res.json({ ok: true, id })
 })
 
 // ── 员工入转调离事件 ──
 org.get('/employees/:id/events', (req, res) => {
+  if (!canReadEmployeeEvents(req.user, req.params.id)) return res.status(403).json({ error: '无权限查看该员工事件' })
   res.json(db.prepare('SELECT * FROM employee_events WHERE employee_id=? ORDER BY event_date').all(req.params.id))
 })
 
 org.post('/employees/:id/events', admin, (req, res) => {
   const { type, event_date, from_value = null, to_value = null, note = '' } = req.body || {}
-  if (!type || !event_date) return res.status(400).json({ error: '缺少类型或日期' })
+  if (!EVENT_TYPES.includes(type) || !isDate(event_date)) return res.status(400).json({ error: '事件类型或日期不合法' })
+  if (!db.prepare('SELECT id FROM employees WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '员工不存在' })
   const r = db.prepare('INSERT INTO employee_events(employee_id,type,event_date,from_value,to_value,note) VALUES(?,?,?,?,?,?)')
-    .run(req.params.id, type, event_date, from_value, to_value, note)
+    .run(req.params.id, type, event_date, from_value == null ? null : String(from_value).slice(0, 200), to_value == null ? null : String(to_value).slice(0, 200), String(note).slice(0, 500))
+  audit(req.user, 'create', 'employee_event', r.lastInsertRowid, null, db.prepare('SELECT * FROM employee_events WHERE id=?').get(r.lastInsertRowid))
   res.json({ ok: true, id: r.lastInsertRowid })
 })
 
 org.delete('/events/:id', admin, (req, res) => {
-  const r = db.prepare('DELETE FROM employee_events WHERE id=?').run(req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '事件不存在' })
+  const before = db.prepare('SELECT * FROM employee_events WHERE id=?').get(req.params.id)
+  if (!before) return res.status(404).json({ error: '事件不存在' })
+  inTransaction(() => {
+    db.prepare('DELETE FROM employee_events WHERE id=?').run(req.params.id)
+    audit(req.user, 'delete', 'employee_event', req.params.id, before, null)
+  })
   res.json({ ok: true })
 })
 

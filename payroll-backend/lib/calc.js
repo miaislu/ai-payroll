@@ -1,17 +1,39 @@
-// 纯计算逻辑（服务端版，与前端 lib/calc.js 保持一致）
-export const CITIES = { 上海: 1.0, 北京: 1.06, 深圳: 1.0, 苏州: 0.90, 无锡: 0.86, 合肥: 0.84, 武汉: 0.86, 成都: 0.85, 西安: 0.82, 杭州: 0.97, 南京: 0.95, 广州: 0.95, 厦门: 0.90 }
-export const EXPS = { '1-3年': 0.58, '3-5年': 1.0, '5-8年': 1.36, '8-10年': 1.62, '10年以上': 1.90 }
-export const TYPES = { Fabless: 1.0, 晶圆厂: 0.93, IDM: 0.90, 设备材料: 0.95, 封测: 0.82, EDA: 1.08, 初创: 0.90 }
-export const STAGES = { 天使轮: 0.25, A轮: 0.35, B轮: 0.45, 'C轮+': 0.55, 已上市: 0.10 }
+// 纯计算逻辑（服务端版）
 
-// 带宽卡：direction 为数据库中的记录（含 p25/p50/p75/rarity/sample/trend）
-export function benchmarkCard(direction, city, exp, type, stage) {
-  const p50 = Math.round(direction.p50 * CITIES[city] * EXPS[exp] * TYPES[type])
-  const p25 = Math.round(direction.p25 * CITIES[city] * EXPS[exp] * TYPES[type])
-  const p75 = Math.round(direction.p75 * CITIES[city] * EXPS[exp] * TYPES[type])
-  const total = Math.round(p50 * (1 + STAGES[stage]) * direction.rarity)
-  const conf = direction.sample >= 120 ? '高' : (direction.sample >= 60 ? '中' : '低')
-  return { p25, p50, p75, total, rarity: direction.rarity, trend: direction.trend, sample: direction.sample, hidden: direction.sample > 100 ? 18 : 25, conf }
+export function normalizeOptionInput(value) {
+  const inp = value && typeof value === 'object' ? value : null
+  if (!inp || !inp.p || typeof inp.p !== 'object') throw Object.assign(new Error('缺少完整的期权模拟参数'), { statusCode: 400 })
+  const positive = ['n', 'v0yi', 'shares', 'vest', 'lq', 'mI', 'mA']
+  const nonnegative = ['k', 'dil']
+  const normalized = { ...inp, p: {} }
+  for (const key of positive) {
+    normalized[key] = Number(inp[key])
+    if (!Number.isFinite(normalized[key]) || normalized[key] <= 0) throw Object.assign(new Error(`${key} 须为大于 0 的有限数字`), { statusCode: 400 })
+  }
+  for (const key of nonnegative) {
+    normalized[key] = Number(inp[key])
+    if (!Number.isFinite(normalized[key]) || normalized[key] < 0) throw Object.assign(new Error(`${key} 须为非负有限数字`), { statusCode: 400 })
+  }
+  if (normalized.dil >= 100) throw Object.assign(new Error('稀释比例 dil 必须小于 100'), { statusCode: 400 })
+  if (normalized.lq > 1) throw Object.assign(new Error('流动性折扣 lq 须在 0-1 之间'), { statusCode: 400 })
+  for (const key of ['ipo', 'acq', 'hold', 'fail']) {
+    normalized.p[key] = Number(inp.p[key])
+    if (!Number.isFinite(normalized.p[key]) || normalized.p[key] < 0) throw Object.assign(new Error(`概率 p.${key} 须为非负有限数字`), { statusCode: 400 })
+  }
+  if (Object.values(normalized.p).reduce((sum, n) => sum + n, 0) <= 0) throw Object.assign(new Error('场景概率之和须大于 0'), { statusCode: 400 })
+  return normalized
+}
+
+// 带宽卡只返回审批后的原始口径；不使用无证据的城市/经验/公司/融资轮次系数外推。
+export function benchmarkCard(direction) {
+  const evidenceConfidence = { 强: '高', 中: '中', 弱: '低' }
+  return {
+    p25: Number(direction.p25), p50: Number(direction.p50), p75: Number(direction.p75),
+    rarity: Number(direction.rarity) || 1,
+    sample: Number(direction.sample) || 0,
+    conf: direction.verified ? (evidenceConfidence[direction.evidence] || '待复核') : '未核验',
+    verified: Boolean(direction.verified)
+  }
 }
 
 // 简化综合所得税率表（原型演示口径）

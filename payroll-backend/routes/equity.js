@@ -1,6 +1,9 @@
 // 期权授予台账：期权池 / 授予记录 CRUD / 汇总（摊销联动成本预测）
 import { Router } from 'express'
-import { db } from '../db.js'
+import { audit, db, inTransaction } from '../db.js'
+import { auth } from '../lib/auth.js'
+import { FINANCE_ROLES } from '../lib/access.js'
+import { isDate } from '../lib/periods.js'
 
 export const equity = Router()
 export const GRANT_STATUS = ['granted', 'vested', 'exercised', 'forfeited']
@@ -10,7 +13,7 @@ function calcGrant(b) {
   const share = Number(b.share_count) || 0
   const fair = Number(b.fair_value) || 0
   const exercise = Number(b.exercise_price) || 0
-  const vesting = Number(b.vesting_months) || 48
+  const vesting = Number(b.vesting_months ?? 48)
   const total_value = Math.round(share * 10000 * (fair - exercise))
   const monthly_amort = vesting > 0 ? Math.round(total_value / vesting) : 0
   return { share, fair, exercise, vesting, total_value, monthly_amort }
@@ -18,11 +21,7 @@ function calcGrant(b) {
 
 // ── 期权池 ──
 equity.get('/pool', (req, res) => {
-  let pool = db.prepare('SELECT * FROM option_pool WHERE id=1').get()
-  if (!pool) {
-    db.prepare('INSERT INTO option_pool(pool_percent,total_shares,valuation_wan,updated_at) VALUES(15,1000,50000,?)').run(new Date().toISOString().slice(0, 10))
-    pool = db.prepare('SELECT * FROM option_pool WHERE id=1').get()
-  }
+  const pool = db.prepare('SELECT * FROM option_pool WHERE id=1').get() || { id: 1, pool_percent: 0, total_shares: 0, valuation_wan: 0, updated_at: null }
   const granted = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE status IN ('granted','vested','exercised')").get().s
   const activeEmployees = db.prepare("SELECT COUNT(DISTINCT employee_id) c FROM option_grants WHERE status IN ('granted','vested')").get().c
   const monthlyAmort = db.prepare("SELECT COALESCE(SUM(monthly_amort),0) s FROM option_grants WHERE status='granted'").get().s
@@ -38,19 +37,24 @@ equity.get('/pool', (req, res) => {
   })
 })
 
-equity.put('/pool', (req, res) => {
+equity.put('/pool', auth(FINANCE_ROLES), (req, res) => {
   const b = req.body || {}
   if (b.pool_percent !== undefined && (!Number.isFinite(Number(b.pool_percent)) || Number(b.pool_percent) < 0 || Number(b.pool_percent) > 100)) return res.status(400).json({ error: '期权池比例须在 0-100 之间' })
   if (b.total_shares !== undefined && (!Number.isFinite(Number(b.total_shares)) || Number(b.total_shares) <= 0)) return res.status(400).json({ error: '总股数须 >0' })
   if (b.valuation_wan !== undefined && (!Number.isFinite(Number(b.valuation_wan)) || Number(b.valuation_wan) < 0)) return res.status(400).json({ error: '估值不得为负数' })
   const granted = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE status IN ('granted','vested','exercised')").get().s
   if (b.total_shares !== undefined && Number(b.total_shares) < granted) return res.status(409).json({ error: `总股数不能低于已授予 ${granted}` })
-  const r = db.prepare('UPDATE option_pool SET pool_percent=COALESCE(?,pool_percent), total_shares=COALESCE(?,total_shares), valuation_wan=COALESCE(?,valuation_wan), updated_at=? WHERE id=1')
-    .run(b.pool_percent ?? null, b.total_shares ?? null, b.valuation_wan ?? null, new Date().toISOString().slice(0, 10))
-  if (!r.changes) {
-    db.prepare('INSERT INTO option_pool(pool_percent,total_shares,valuation_wan,updated_at) VALUES(?,?,?,?)')
-      .run(b.pool_percent ?? 15, b.total_shares ?? 1000, b.valuation_wan ?? 50000, new Date().toISOString().slice(0, 10))
-  }
+  const before = db.prepare('SELECT * FROM option_pool WHERE id=1').get() || null
+  if (!before && b.total_shares === undefined) return res.status(400).json({ error: '首次配置期权池必须填写总股数' })
+  inTransaction(() => {
+    const r = db.prepare('UPDATE option_pool SET pool_percent=COALESCE(?,pool_percent), total_shares=COALESCE(?,total_shares), valuation_wan=COALESCE(?,valuation_wan), updated_at=? WHERE id=1')
+      .run(b.pool_percent ?? null, b.total_shares ?? null, b.valuation_wan ?? null, new Date().toISOString().slice(0, 10))
+    if (!r.changes) {
+      db.prepare('INSERT INTO option_pool(id,pool_percent,total_shares,valuation_wan,updated_at) VALUES(1,?,?,?,?)')
+        .run(b.pool_percent ?? 0, b.total_shares ?? 0, b.valuation_wan ?? 0, new Date().toISOString().slice(0, 10))
+    }
+    audit(req.user, before ? 'update' : 'create', 'option_pool', 1, before, db.prepare('SELECT * FROM option_pool WHERE id=1').get())
+  })
   res.json({ ok: true })
 })
 
@@ -64,26 +68,34 @@ equity.get('/grants', (req, res) => {
   res.json(rows.map(g => ({ ...g, employee_name: emps[g.employee_id]?.name || '（已删除）', grade: emps[g.employee_id]?.grade || '', job_family: emps[g.employee_id]?.job_family || '' })))
 })
 
-equity.post('/grants', (req, res) => {
+equity.post('/grants', auth(FINANCE_ROLES), (req, res) => {
   const b = req.body || {}
   if (!b.employee_id || !b.share_count) return res.status(400).json({ error: '缺少员工或授予股数' })
   const emp = db.prepare('SELECT id FROM employees WHERE id=?').get(b.employee_id)
   if (!emp) return res.status(400).json({ error: '员工不存在' })
   if (Number(b.share_count) <= 0) return res.status(400).json({ error: '授予股数须 >0' })
+  if (b.grant_date && !isDate(b.grant_date)) return res.status(400).json({ error: '授予日期不合法' })
+  if (![b.share_count, b.fair_value ?? 0, b.exercise_price ?? 0, b.vesting_months ?? 48, b.cliff_months ?? 12].every(x => Number.isFinite(Number(x)))) return res.status(400).json({ error: '授予数值字段不合法' })
   if (Number(b.fair_value) < Number(b.exercise_price)) return res.status(400).json({ error: '公允价须 ≥ 行权价' })
   if (b.status && !GRANT_STATUS.includes(b.status)) return res.status(400).json({ error: '授予状态不合法' })
   const c = calcGrant(b)
-  const cliff = Number(b.cliff_months) || 12
+  const cliff = Number(b.cliff_months ?? 12)
   if (c.vesting < 1 || c.vesting > 120 || cliff < 0 || cliff > c.vesting) return res.status(400).json({ error: '归属期须为 1-120 月，cliff 不得超过归属期' })
   const pool = db.prepare('SELECT total_shares FROM option_pool WHERE id=1').get()
+  if (!pool) return res.status(409).json({ error: '请先由财务或 CEO 配置期权池' })
   const granted = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE status IN ('granted','vested','exercised')").get().s
   if (pool && granted + c.share > pool.total_shares) return res.status(409).json({ error: '授予股数超过期权池剩余额度' })
-  const r = db.prepare('INSERT INTO option_grants(employee_id,grant_date,share_count,exercise_price,fair_value,vesting_months,cliff_months,total_value,monthly_amort,status,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-    .run(b.employee_id, b.grant_date || new Date().toISOString().slice(0, 10), c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || 'granted', b.note || '')
-  res.json({ ok: true, id: r.lastInsertRowid, total_value: c.total_value, monthly_amort: c.monthly_amort })
+  let id
+  inTransaction(() => {
+    const r = db.prepare('INSERT INTO option_grants(employee_id,grant_date,share_count,exercise_price,fair_value,vesting_months,cliff_months,total_value,monthly_amort,status,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(b.employee_id, b.grant_date || new Date().toISOString().slice(0, 10), c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || 'granted', b.note || '')
+    id = r.lastInsertRowid
+    audit(req.user, 'create', 'option_grant', id, null, db.prepare('SELECT * FROM option_grants WHERE id=?').get(id))
+  })
+  res.json({ ok: true, id, total_value: c.total_value, monthly_amort: c.monthly_amort })
 })
 
-equity.put('/grants/:id', (req, res) => {
+equity.put('/grants/:id', auth(FINANCE_ROLES), (req, res) => {
   const b = req.body || {}
   const cur = db.prepare('SELECT * FROM option_grants WHERE id=?').get(req.params.id)
   if (!cur) return res.status(404).json({ error: '授予记录不存在' })
@@ -93,6 +105,8 @@ equity.put('/grants/:id', (req, res) => {
   }
   const c = calcGrant(merged)
   const cliff = b.cliff_months ?? cur.cliff_months
+  if (b.grant_date && !isDate(b.grant_date)) return res.status(400).json({ error: '授予日期不合法' })
+  if (![merged.share_count, merged.fair_value, merged.exercise_price, merged.vesting_months, cliff].every(x => Number.isFinite(Number(x)))) return res.status(400).json({ error: '授予数值字段不合法' })
   if (c.share <= 0 || c.fair < c.exercise) return res.status(400).json({ error: '授予股数须 >0，公允价须 ≥ 行权价' })
   if (c.vesting < 1 || c.vesting > 120 || Number(cliff) < 0 || Number(cliff) > c.vesting) return res.status(400).json({ error: '归属期须为 1-120 月，cliff 不得超过归属期' })
   if (b.status && !GRANT_STATUS.includes(b.status)) return res.status(400).json({ error: '授予状态不合法' })
@@ -100,14 +114,21 @@ equity.put('/grants/:id', (req, res) => {
   const grantedOther = db.prepare("SELECT COALESCE(SUM(share_count),0) s FROM option_grants WHERE id<>? AND status IN ('granted','vested','exercised')").get(req.params.id).s
   const nextStatus = b.status || cur.status
   if (pool && ['granted', 'vested', 'exercised'].includes(nextStatus) && grantedOther + c.share > pool.total_shares) return res.status(409).json({ error: '授予股数超过期权池剩余额度' })
-  const r = db.prepare('UPDATE option_grants SET share_count=?, exercise_price=?, fair_value=?, vesting_months=?, cliff_months=COALESCE(?,cliff_months), total_value=?, monthly_amort=?, status=COALESCE(?,status), note=COALESCE(?,note), grant_date=COALESCE(?,grant_date) WHERE id=?')
-    .run(c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || null, b.note || null, b.grant_date || null, req.params.id)
+  inTransaction(() => {
+    db.prepare('UPDATE option_grants SET share_count=?, exercise_price=?, fair_value=?, vesting_months=?, cliff_months=COALESCE(?,cliff_months), total_value=?, monthly_amort=?, status=COALESCE(?,status), note=COALESCE(?,note), grant_date=COALESCE(?,grant_date) WHERE id=?')
+      .run(c.share, c.exercise, c.fair, c.vesting, cliff, c.total_value, c.monthly_amort, b.status || null, b.note || null, b.grant_date || null, req.params.id)
+    audit(req.user, 'update', 'option_grant', req.params.id, cur, db.prepare('SELECT * FROM option_grants WHERE id=?').get(req.params.id))
+  })
   res.json({ ok: true, id: Number(req.params.id), total_value: c.total_value, monthly_amort: c.monthly_amort })
 })
 
-equity.delete('/grants/:id', (req, res) => {
-  const r = db.prepare('DELETE FROM option_grants WHERE id=?').run(req.params.id)
-  if (!r.changes) return res.status(404).json({ error: '授予记录不存在' })
+equity.delete('/grants/:id', auth(FINANCE_ROLES), (req, res) => {
+  const before = db.prepare('SELECT * FROM option_grants WHERE id=?').get(req.params.id)
+  if (!before) return res.status(404).json({ error: '授予记录不存在' })
+  inTransaction(() => {
+    db.prepare('DELETE FROM option_grants WHERE id=?').run(req.params.id)
+    audit(req.user, 'delete', 'option_grant', req.params.id, before, null)
+  })
   res.json({ ok: true })
 })
 

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getRequisitions, createRequisition, updateRequisition, deleteRequisition, getDepartments } from '../api.js'
 import { REQUISITION_STATUS, DIRECTIONS } from '../data.js'
+import { addMonths, currentPeriod } from '../lib/period.js'
 
-const EMPTY = { title: '', department_id: null, job_family: '模拟IC设计', grade: 'P5', city: '上海', headcount: 1, priority: 'normal', status: 'open', salary_min: 30000, salary_max: 50000, reason: '', target_month: '2025-08' }
+const EMPTY = { title: '', department_id: null, job_family: '模拟IC设计', grade: 'P5', city: '上海', headcount: 1, priority: 'normal', status: 'open', salary_min: 30000, salary_max: 50000, reason: '', target_month: addMonths(currentPeriod(), 2) }
 const statusKind = k => ({ open: 'ok', interview: 'info', draft: 'gray', closed: 'gray', cancelled: 'warn' }[k] || 'gray')
 const statusLabel = k => REQUISITION_STATUS.find(s => s.key === k)?.label || k
 
@@ -66,7 +67,7 @@ export default function Requisitions({ toast, backendUp }) {
       </Card>
 
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(null)}>
+        <Modal onClose={() => setEditing(null)}>
           <div className="modal" style={{ width: 580 }}>
             <h3>{editing === 'new' ? '新建招聘需求' : '编辑需求 · ' + editing.title}</h3>
             <div className="grid g2">
@@ -108,7 +109,7 @@ export default function Requisitions({ toast, backendUp }) {
               <Btn primary onClick={save}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

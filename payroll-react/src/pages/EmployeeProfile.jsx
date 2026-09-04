@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Card, Chip, Hint, Btn, Field } from '../components/ui.jsx'
+import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
+import { maskPii } from '../lib/format.js'
 import {
   getEmployeeProfile, updateEmployeeProfile,
   createEmergencyContact, deleteEmergencyContact,
@@ -43,6 +44,35 @@ const EMPTY_CONTACT = { name: '', relation: '配偶', mobile: '', address: '', i
 const EMPTY_EDU = { school: '', qualification: '本科', major: '', graduation_year: '', note: '' }
 const EMPTY_WORK = { company: '', title: '', start_date: '', end_date: '', note: '' }
 const EMPTY_FAMILY = { name: '', relation: '配偶', note: '' }
+
+function InfoRow({ label, value }) {
+  return (
+    <div style={{ padding: '6px 0', fontSize: 13, display: 'flex', gap: 8, borderBottom: '1px solid #f8fafc' }}>
+      <span style={{ width: 84, color: 'var(--muted)', flexShrink: 0 }}>{label}</span>
+      <span>{value || '—'}</span>
+    </div>
+  )
+}
+
+function SecretRow({ label, value }) {
+  const [show, setShow] = useState(false)
+  const raw = value || ''
+  return (
+    <div style={{ padding: '6px 0', fontSize: 13, display: 'flex', gap: 8, borderBottom: '1px solid #f8fafc', alignItems: 'center' }}>
+      <span style={{ width: 84, color: 'var(--muted)', flexShrink: 0 }}>{label}</span>
+      <span style={{ flex: 1 }}>{raw ? (show ? raw : maskPii(raw)) : '—'}</span>
+      {raw ? <Btn sm onClick={() => setShow(s => !s)}>{show ? '隐藏' : '显示'}</Btn> : null}
+    </div>
+  )
+}
+
+function Section({ title, children, extra }) {
+  return (
+    <Card title={<>{title}{extra}</>} style={{ marginTop: 14 }}>
+      {children}
+    </Card>
+  )
+}
 
 export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
   const [data, setData] = useState(null)
@@ -144,18 +174,6 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
   const statusChip = e.status === 'departed' ? <Chip kind="warn">离职</Chip> : e.status === 'offer' ? <Chip kind="info">发offer</Chip> : <Chip kind="ok">在职</Chip>
   const age = e.date_of_birth ? Math.floor((Date.now() - new Date(e.date_of_birth)) / 31557600000) : null
 
-  const InfoRow = ({ label, value }) => (
-    <div style={{ padding: '6px 0', fontSize: 13, display: 'flex', gap: 8, borderBottom: '1px solid #f8fafc' }}>
-      <span style={{ width: 84, color: 'var(--muted)', flexShrink: 0 }}>{label}</span>
-      <span>{value || '—'}</span>
-    </div>
-  )
-  const Section = ({ title, children, extra }) => (
-    <Card title={<>{title}{extra}</>} style={{ marginTop: 14 }}>
-      {children}
-    </Card>
-  )
-
   return (
     <>
       {/* 头部 */}
@@ -177,14 +195,14 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
           <InfoRow label="婚姻状况" value={e.marital_status} />
           <InfoRow label="民族" value={e.nationality} />
           <InfoRow label="最高学历" value={e.education_level} />
-          <InfoRow label="证件号码" value={e.id_number} />
+          <SecretRow label="证件号码" value={e.id_number} />
           <InfoRow label="技能" value={e.skills} />
         </Section>
 
         <Section title="联系方式" extra={<Btn sm onClick={openEdit}>✏️ 编辑</Btn>}>
-          <InfoRow label="手机号" value={e.mobile} />
-          <InfoRow label="个人邮箱" value={e.personal_email} />
-          <InfoRow label="备用电话" value={e.alternate_mobile} />
+          <SecretRow label="手机号" value={e.mobile} />
+          <SecretRow label="个人邮箱" value={e.personal_email} />
+          <SecretRow label="备用电话" value={e.alternate_mobile} />
           <InfoRow label="现居地址" value={e.current_address} />
           <InfoRow label="户籍地址" value={e.permanent_address} />
         </Section>
@@ -196,11 +214,11 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
           <InfoRow label="合同期限" value={e.contract_start && e.contract_end ? `${e.contract_start} ~ ${e.contract_end}` : (e.contract_start || e.contract_end)} />
           <InfoRow label="试用期至" value={e.probation_end} />
           <InfoRow label="转正日期" value={e.confirmation_date} />
-          <InfoRow label="社保号" value={e.social_security_no} />
-          <InfoRow label="公积金号" value={e.housing_fund_no} />
+          <SecretRow label="社保号" value={e.social_security_no} />
+          <SecretRow label="公积金号" value={e.housing_fund_no} />
           <InfoRow label="补充公积金" value={e.supplemental_fund_rate > 0 ? (e.supplemental_fund_rate * 100).toFixed(0) + '%（个人 + 单位同比例）' : '未缴'} />
           <InfoRow label="开户银行" value={e.bank_name} />
-          <InfoRow label="银行卡号" value={e.bank_account} />
+          <SecretRow label="银行卡号" value={e.bank_account} />
           <InfoRow label="离职通知期" value={e.notice_period} />
         </Section>
 
@@ -208,7 +226,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
           {data.emergency_contacts.length ? data.emergency_contacts.map(c => (
             <div key={c.id} style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, margin: '6px 0', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
               <b>{c.name}</b>{c.is_primary ? <Chip kind="warn">主</Chip> : null}
-              <span className="hint">{c.relation} · {c.mobile} · {c.address || ''}</span>
+              <span className="hint">{c.relation} · {c.mobile ? maskPii(c.mobile) : ''} · {c.address || ''}</span>
               <span style={{ marginLeft: 'auto', color: '#dc2626', cursor: 'pointer' }} onClick={() => del('contact', c.id)}>✕</span>
             </div>
           )) : <Hint>暂无紧急联系人</Hint>}
@@ -282,7 +300,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
 
       {/* 编辑弹窗 */}
       {editing && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setEditing(false)}>
+        <Modal onClose={() => setEditing(false)}>
           <div className="modal" style={{ width: 680, maxHeight: '86vh', overflowY: 'auto' }}>
             <h3>编辑档案 · {e.name}</h3>
             {EDIT_GROUPS.map(g => (
@@ -304,12 +322,12 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
               <Btn primary onClick={saveEdit}>保存全部</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* 子表添加弹窗 */}
       {adding && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setAdding(null)}>
+        <Modal onClose={() => setAdding(null)}>
           <div className="modal" style={{ width: 540 }}>
             <h3>{adding === 'contact' ? '添加紧急联系人' : adding === 'edu' ? '添加教育经历' : adding === 'work' ? '添加工作经历' : '添加家庭成员'}</h3>
             <div className="grid g2">
@@ -361,12 +379,12 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
               <Btn primary onClick={saveAdd}>保存</Btn>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* 简历解析结果预览 */}
       {preview && (
-        <div id="modal-bg" className="show" onClick={e => e.target.id === 'modal-bg' && setPreview(null)}>
+        <Modal onClose={() => setPreview(null)}>
           <div className="modal" style={{ width: 640, maxHeight: '86vh', overflowY: 'auto' }}>
             <h3>🤖 AI 解析结果 · {preview.name}</h3>
             {preview.engine && <Hint>解析引擎：{preview.engine}{preview.saved && preview.parsed?.engine ? '（' + preview.parsed.engine + '）' : ''}</Hint>}
@@ -401,7 +419,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
               </>
             ) : <Hint>该简历已解析过，请在列表点「预览」查看已保存的结果，或重新执行 AI 解析。</Hint>}
           </div>
-        </div>
+        </Modal>
       )}
     </>
   )

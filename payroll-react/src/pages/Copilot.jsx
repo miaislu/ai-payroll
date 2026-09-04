@@ -1,27 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, Chip, Hint, Btn } from '../components/ui.jsx'
-import { KB } from '../data.js'
-import { askCopilot } from '../api.js'
+import { askCopilot, clearCopilot, getCopilotConfig } from '../api.js'
 
 export default function Copilot({ toast, backendUp }) {
-  const [msgs, setMsgs] = useState([{ role: 'ai', text: '你好，我是 AI 薪酬助手。可以问我制度、政策、薪酬计算口径等问题（支持多轮追问，回答都会附上来源）。' }])
+  const [msgs, setMsgs] = useState([{ role: 'ai', text: '你好，我是人力助手。可以问我制度、社保个税、加班、招聘定薪、考勤等问题（支持多轮追问，回答都会附上来源）。' }])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [engine, setEngine] = useState(null) // null | 'llm' | 'kb'
+  const [config, setConfig] = useState(null)
+  const [allowExternal, setAllowExternal] = useState(false)
   const box = useRef(null)
   const sessionId = useRef('s-' + Date.now() + '-' + Math.random().toString(36).slice(2))
 
   const newSession = () => {
+    const oldSession = sessionId.current
     sessionId.current = 's-' + Date.now() + '-' + Math.random().toString(36).slice(2)
-    setMsgs([{ role: 'ai', text: '已开启新会话。可以继续问我薪酬/政策问题（多轮记忆已清空）。' }])
-    if (backendUp) fetch('/api/copilot/clear', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (sessionStorage.getItem('payroll_token') || '') }, body: JSON.stringify({ sessionId: sessionId.current }) }).catch(() => {})
+    setMsgs([{ role: 'ai', text: '已开启新会话。可以继续问我人事/薪酬/政策问题（多轮记忆已清空）。' }])
+    if (backendUp) clearCopilot(oldSession).catch(() => {})
   }
 
   useEffect(() => {
     if (!backendUp) return
-    fetch('/api/copilot/config', { headers: { Authorization: 'Bearer ' + (sessionStorage.getItem('payroll_token') || '') } })
-      .then(r => r.ok ? r.json() : null)
-      .then(c => c && setEngine(c.engine === 'llm' ? 'llm' : 'kb'))
+    getCopilotConfig()
+      .then(c => setConfig(c || null))
       .catch(() => {})
   }, [backendUp])
 
@@ -33,25 +33,24 @@ export default function Copilot({ toast, backendUp }) {
     push('user', q)
     setBusy(true)
     try {
-      if (backendUp) {
-        const r = await askCopilot(q, sessionId.current)
-        setBusy(false)
-        return push('ai', r.answer + (r.source ? '\n\n' + r.source : ''), r.engine === 'llm' ? 'LLM' : '知识库')
-      }
-    } catch { /* 落本地 KB */ }
-    setBusy(false)
-    const hit = KB.find(item => item.k.every(w => q.includes(w)))
-    if (hit) push('ai', hit.a + '\n\n' + hit.s, '知识库')
-    else { push('ai', '这个问题需要结合具体情况，已转给 HR 人工处理（预计 2 小时内回复）。\n\n提示：可尝试"试用期/社保""加班""期权递延""离职结算"等关键词。', '转人工'); toast('已转人工工单（本地演示）') }
+      if (!backendUp) throw new Error('后端不可用')
+      const r = await askCopilot(q, sessionId.current, allowExternal)
+      setBusy(false)
+      return push('ai', r.answer + (r.source ? '\n\n' + r.source : ''), r.engine === 'llm' ? '外部 LLM（已脱敏）' : '本地知识库')
+    } catch (error) {
+      setBusy(false)
+      push('ai', `暂时无法取得可靠回答：${error.message}。请稍后重试或通过公司现有渠道联系 HR。`, '请求失败')
+      toast('人力助手请求失败')
+    }
   }
   const send = () => { const q = input.trim(); if (!q || busy) return; setInput(''); ask(q) }
 
   return (
-    <Card title={<>AI 薪酬助手
-      {engine === 'llm' ? <Chip kind="ok">● LLM 引擎 · 多轮记忆</Chip> : engine === 'kb' ? <Chip kind="warn">知识库引擎（未配置 LLM key）</Chip> : <Chip kind="gray">知识库：本地 6 条</Chip>}
+    <Card title={<>人力助手
+      {config?.external_enabled ? <Chip kind="warn">本地知识库 · 外部 LLM 可逐次授权</Chip> : <Chip kind="ok">本地知识库</Chip>}
     </>}>
       <div className="chip-row">
-        <Btn sm onClick={() => ask('上海 2025 社保基数下限是多少？')}>上海社保基数</Btn>
+        <Btn sm onClick={() => ask('为什么社保参数必须按账期核验？')}>社保参数核验</Btn>
         <Btn sm onClick={() => ask('加班费倍数怎么算？')}>加班费</Btn>
         <Btn sm onClick={() => ask('期权递延纳税需要什么条件？')}>期权递延纳税</Btn>
         <Btn sm onClick={() => ask('苏州的社保基数是多少？')}>苏州（未收录城市）</Btn>
@@ -70,7 +69,10 @@ export default function Copilot({ toast, backendUp }) {
         <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="输入问题，例如：离职当月社保怎么算？" />
         <Btn primary onClick={send} disabled={busy}>发送</Btn>
       </div>
-      <Hint style={{ marginTop: 8 }}>RAG 知识库 12 条政策/制度 · LLM 回答附来源且禁止编造；上下文不足自动转人工</Hint>
+      {config?.external_enabled && <label className="hint" style={{ display: 'block', marginTop: 8 }}>
+        <input type="checkbox" checked={allowExternal} onChange={e => setAllowExternal(e.target.checked)} /> 允许本次会话将每个问题及近期上下文脱敏后发送给已配置的外部 LLM
+      </label>}
+      <Hint style={{ marginTop: 8 }}>默认仅使用本地知识库；外部发送需管理员开关与用户显式同意。系统不会自动创建 HR 工单。</Hint>
     </Card>
   )
 }
