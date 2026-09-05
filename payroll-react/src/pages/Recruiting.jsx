@@ -58,7 +58,8 @@ export default function Recruiting({ toast, backendUp, goto }) {
 
       <Card title="渠道效果" style={{ marginTop: 14 }}>
         <table>
-          <tr><th>渠道</th><th>候选人</th><th>入职</th><th>费用</th><th>人均招聘成本</th></tr>
+          <thead><tr><th>渠道</th><th>候选人</th><th>入职</th><th>费用</th><th>人均招聘成本</th></tr></thead>
+          <tbody>
           {stats?.channels.map(c => (
             <tr key={c.name}>
               <td><b>{c.name}</b></td>
@@ -69,12 +70,14 @@ export default function Recruiting({ toast, backendUp, goto }) {
             </tr>
           ))}
           {stats && !stats.channels.length && <tr><td colSpan={5}><Hint>暂无渠道数据</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 
       <Card title={<>进行中的招聘需求 <Chip kind="info">{openReqs.length} 个</Chip></>} style={{ marginTop: 14 }}>
         <table>
-          <tr><th>岗位</th><th>部门</th><th>职级</th><th>城市</th><th>编制</th><th>已入职/进行中</th><th>状态</th><th>操作</th></tr>
+          <thead><tr><th>岗位</th><th>部门</th><th>职级</th><th>城市</th><th>编制</th><th>已入职/进行中</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
           {openReqs.map(r => (
             <tr key={r.id}>
               <td><b>{r.title}</b></td>
@@ -88,6 +91,7 @@ export default function Recruiting({ toast, backendUp, goto }) {
             </tr>
           ))}
           {!openReqs.length && <tr><td colSpan={8}><Hint>暂无进行中的招聘需求</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
     </>

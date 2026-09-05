@@ -7,6 +7,7 @@ import { formatWan } from '../lib/format.js'
 import { currentPeriod, periodOptions } from '../lib/period.js'
 
 const CAT_COLORS = { salary: '#2f54eb', social: '#0ea5e9', fund: '#10b981', option: '#8b5cf6', recruiting: '#d97706', other: '#94a3b8' }
+const formatWanValue = value => `¥${Number(value || 0).toLocaleString('zh-CN')}万`
 export default function CostDashboard({ toast, backendUp, goto }) {
   const [period, setPeriod] = useState(currentPeriod())
   const [s, setS] = useState(null)
@@ -47,7 +48,7 @@ export default function CostDashboard({ toast, backendUp, goto }) {
               </div>
             </div>
           ))}
-          <Hint>应发工资含基础+绩效+加班；公司社保 ≈ 缴费基数×26%（养老16+医疗9.5+失业0.5+工伤0.2）；期权摊销来自<a href="#" onClick={e => { e.preventDefault(); goto('equity') }} style={{ color: 'var(--accent)' }}>📜 授予台账</a>（未入台账员工按年度估值估算）</Hint>
+          <Hint>应发工资含基础、绩效与加班；公司社保和公积金按员工所在城市、账期及已核验政策参数逐项计算，未核验时只提供预览并阻断月结；期权摊销来自<a href="#" onClick={e => { e.preventDefault(); goto('equity') }} style={{ color: 'var(--accent)' }}>📜 授予台账</a>。</Hint>
         </Card>
 
         <Card title="成本分布（按部门）">
@@ -69,10 +70,10 @@ export default function CostDashboard({ toast, backendUp, goto }) {
       <Card title={<>环比归因 <Chip kind="info">增量 = 新增 + 离职 + 存量变化</Chip></>} style={{ marginTop: 14 }}>
         {s && (
           <div className="grid g4">
-            <Kpi label="新增入职" num={formatWan(s.attribution.newHire) + '万'} numColor="#10b981" />
-            <Kpi label="离职释放" num={formatWan(s.attribution.departed) + '万'} numColor="#3b82f6" />
-            <Kpi label="存量变化" num={formatWan(s.attribution.other) + '万'} numColor="#f59e0b" />
-            <Kpi label="净变化" num={formatWan(s.attribution.deltaWan) + '万'} numColor={s.attribution.deltaWan >= 0 ? '#dc2626' : '#10b981'} />
+            <Kpi label="新增入职" num={formatWanValue(s.attribution.newHire)} numColor="#10b981" />
+            <Kpi label="离职释放" num={formatWanValue(s.attribution.departed)} numColor="#3b82f6" />
+            <Kpi label="存量变化" num={formatWanValue(s.attribution.other)} numColor="#f59e0b" />
+            <Kpi label="净变化" num={formatWanValue(s.attribution.deltaWan)} numColor={s.attribution.deltaWan >= 0 ? '#dc2626' : '#10b981'} />
           </div>
         )}
         <Hint style={{ marginTop: 8 }}>新入职和离职员工按精确日期/计薪天数折算；存量变化 = 调薪、绩效、社保基数等变化。</Hint>

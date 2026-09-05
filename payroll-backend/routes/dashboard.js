@@ -12,7 +12,7 @@ function periodTotal(period) {
   return companyCostRowsForPeriod(period).rows.reduce((sum, row) => sum + row.total, 0)
 }
 function bandOf(jobFamily) {
-  return db.prepare('SELECT * FROM benchmarks WHERE direction=?').get(jobFamily)
+  return db.prepare('SELECT * FROM benchmarks WHERE direction=? AND verified=1').get(jobFamily)
 }
 function prevPeriod(period) {
   const [y, m] = period.split('-').map(Number)

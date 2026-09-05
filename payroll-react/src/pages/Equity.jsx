@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Kpi, Modal } from '../components/ui.jsx'
 import { getEquityPool, updateEquityPool, getEquityGrants, createEquityGrant, updateEquityGrant, deleteEquityGrant, getEquitySummary, getEmployees } from '../api.js'
 import { formatWan } from '../lib/format.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const STATUS_LABEL = { granted: '归属中', vested: '已归属', exercised: '已行权', forfeited: '已失效' }
 const STATUS_KIND = { granted: 'info', vested: 'ok', exercised: 'ok', forfeited: 'warn' }
 const EMPTY = { employee_id: null, grant_date: new Date().toISOString().slice(0, 10), share_count: '', exercise_price: 1, fair_value: 50, vesting_months: 48, cliff_months: 12, status: 'granted', note: '' }
 
 export default function Equity({ toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [pool, setPool] = useState(null)
   const [grants, setGrants] = useState(null)
   const [summary, setSummary] = useState(null)
@@ -38,7 +40,7 @@ export default function Equity({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
   const del = async g => {
-    if (!confirm(`删除 ${g.employee_name} 的授予记录？`)) return
+    if (!await askConfirm({ title: '删除期权授予', message: `确认删除 ${g.employee_name} 的授予记录？相关成本摊销会随之变化。`, confirmLabel: '删除' })) return
     try { await deleteEquityGrant(g.id); toast('已删除'); load() } catch { toast('删除失败') }
   }
   const savePool = async () => {
@@ -63,7 +65,8 @@ export default function Equity({ toast, backendUp }) {
           <Btn primary onClick={() => open('new')}>+ 新增授予</Btn>
         </div>
         <table>
-          <tr><th>员工</th><th>职级</th><th>授予日</th><th>股数(万)</th><th>行权价</th><th>公允价</th><th>归属期</th><th>授予价值</th><th>月摊销</th><th>状态</th><th>备注</th><th>操作</th></tr>
+          <thead><tr><th>员工</th><th>职级</th><th>授予日</th><th>股数(万)</th><th>行权价</th><th>公允价</th><th>归属期</th><th>授予价值</th><th>月摊销</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+          <tbody>
           {grants?.map(g => (
             <tr key={g.id}>
               <td><b>{g.employee_name}</b></td>
@@ -84,6 +87,7 @@ export default function Equity({ toast, backendUp }) {
             </tr>
           ))}
           {grants && !grants.length && <tr><td colSpan={12}><Hint>暂无期权授予记录</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 
@@ -91,7 +95,8 @@ export default function Equity({ toast, backendUp }) {
         <div className="grid g2" style={{ marginTop: 14 }}>
           <Card title="摊销分布（按员工）">
             <table>
-              <tr><th>员工</th><th>部门</th><th>月摊销</th><th>授予价值</th></tr>
+              <thead><tr><th>员工</th><th>部门</th><th>月摊销</th><th>授予价值</th></tr></thead>
+              <tbody>
               {summary.byEmployee.map(x => (
                 <tr key={x.employee_id}>
                   <td><b>{x.name}</b></td><td>{x.department || '—'}</td>
@@ -99,11 +104,13 @@ export default function Equity({ toast, backendUp }) {
                   <td>{formatWan(x.total_value)}</td>
                 </tr>
               ))}
+              </tbody>
             </table>
           </Card>
           <Card title="摊销分布（按部门）">
             <table>
-              <tr><th>部门</th><th>月摊销</th><th>授予价值</th><th>占比</th></tr>
+              <thead><tr><th>部门</th><th>月摊销</th><th>授予价值</th><th>占比</th></tr></thead>
+              <tbody>
               {summary.byDept.map(x => (
                 <tr key={x.name}>
                   <td><b>{x.name}</b></td>
@@ -112,6 +119,7 @@ export default function Equity({ toast, backendUp }) {
                   <td>{summary.totalMonthly ? Math.round(x.monthly / summary.totalMonthly * 100) + '%' : '—'}</td>
                 </tr>
               ))}
+              </tbody>
             </table>
           </Card>
         </div>

@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getCandidatesKanban, getRequisitions, createCandidate, setCandidateStage, updateCandidate, getOfferSuggest, getInterviews, createInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, deleteCandidateResume, downloadCandidateResume } from '../api.js'
 import { CANDIDATE_STAGES } from '../data.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const EMPTY = { name: '', phone: '', email: '', source_channel: '内推', requisition_id: null, stage: 'new', expected_salary: 30000, apply_date: '' }
 const fmtMoney = v => v ? '¥' + v.toLocaleString('zh-CN') : '—'
 
 export default function Candidates({ toast, backendUp, goto }) {
+  const { confirm: askConfirm, prompt: askPrompt } = useDialog()
   const [kanban, setKanban] = useState(null)
   const [reqs, setReqs] = useState([])
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [detail, setDetail] = useState(null) // 候选人详情
   const [suggest, setSuggest] = useState(null) // Offer 建议
+  const [suggestUnavailable, setSuggestUnavailable] = useState('')
   const [ivForm, setIvForm] = useState({ round_no: 1, interviewer: '', result: 'pending', score: '', notes: '' })
   const [resumeParsing, setResumeParsing] = useState(false)
   const [resumePreview, setResumePreview] = useState(null) // 解析结果预览
@@ -41,7 +44,10 @@ export default function Candidates({ toast, backendUp, goto }) {
     const idx = CANDIDATE_STAGES.findIndex(s => s.key === c.stage)
     const next = CANDIDATE_STAGES[Math.max(0, Math.min(CANDIDATE_STAGES.length - 1, idx + dir))]
     if (next.key === c.stage) return
-    const reject_reason = next.key === 'rejected' ? prompt('淘汰原因：') || '' : undefined
+    const reject_reason = next.key === 'rejected'
+      ? await askPrompt({ title: '淘汰候选人', label: '淘汰原因', required: true, confirmLabel: '确认淘汰' })
+      : undefined
+    if (next.key === 'rejected' && reject_reason === null) return
     try { await setCandidateStage(c.id, { stage: next.key, reject_reason }); toast(`${c.name} → ${next.label}`); load() }
     catch { toast('流转失败') }
   }
@@ -49,14 +55,20 @@ export default function Candidates({ toast, backendUp, goto }) {
   const openDetail = async c => {
     setDetail(c)
     setSuggest(null)
+    setSuggestUnavailable(c.stage === 'offer' ? '正在查询同口径已审批带宽…' : '')
     if (c.stage === 'offer' && c.requisition_id) {
       const r = reqs.find(x => x.id === c.requisition_id)
       if (r) {
         try {
           const s = await getOfferSuggest({ job_family: r.job_family, annual_cash: (c.offer_amount || c.expected_salary || 0) * 12, city: r.city })
           setSuggest(s)
-        } catch { /* 无对标数据忽略 */ }
+          setSuggestUnavailable('')
+        } catch {
+          setSuggestUnavailable('暂无同口径已审批带宽。请结合招聘需求预算、候选人期望与面试记录人工判断；未核验带宽不会用于定薪。')
+        }
       }
+    } else if (c.stage === 'offer') {
+      setSuggestUnavailable('候选人尚未关联招聘需求，无法匹配岗位、城市和职级口径。')
     }
   }
 
@@ -75,8 +87,12 @@ export default function Candidates({ toast, backendUp, goto }) {
 
   const saveOffer = async () => {
     if (!detail) return
-    const amount = prompt('Offer 现金月薪（元）：', detail.offer_amount || detail.expected_salary || '')
-    if (!amount) return
+    const amount = await askPrompt({
+      title: '更新 Offer', label: '现金月薪（元）', inputType: 'number', min: 1,
+      defaultValue: detail.offer_amount || detail.expected_salary || '', required: true,
+      message: '修改金额会使原有待审批记录自动失效。', confirmLabel: '保存金额'
+    })
+    if (amount === null) return
     try {
       await updateCandidate(detail.id, { offer_amount: +amount, offer_date: new Date().toISOString().slice(0, 10) })
       toast('Offer 金额已更新；原审批如有已自动失效')
@@ -90,8 +106,8 @@ export default function Candidates({ toast, backendUp, goto }) {
   // 办理入职：生成员工档案 + 自动记录入职事件（招聘 → 员工 闭环）
   const doOnboard = async () => {
     if (!detail) return
-    const date = prompt('入职日期（YYYY-MM-DD）：', new Date().toISOString().slice(0, 10))
-    if (!date) return
+    const date = await askPrompt({ title: '办理入职', label: '入职日期', inputType: 'date', defaultValue: new Date().toISOString().slice(0, 10), required: true, confirmLabel: '确认入职' })
+    if (date === null) return
     try {
       const r = await onboardCandidate(detail.id, { onboard_date: date })
       toast(`🎉 ${r.name} 已入职（员工 #${r.employee_id}，${r.hire_month}）`)
@@ -115,7 +131,11 @@ export default function Candidates({ toast, backendUp, goto }) {
   }
   const doParseResume = async () => {
     if (!detail) return
-    const allowExternal = confirm('是否允许将脱敏后的简历正文发送给已配置的外部 AI？\n选择“取消”将仅使用本地规则解析。')
+    const allowExternal = await askConfirm({
+      title: '选择简历解析方式',
+      message: '允许后将脱敏后的简历正文发送给已配置的外部 AI；选择“仅本地解析”不会发送正文。',
+      confirmLabel: '允许并解析', cancelLabel: '仅本地解析'
+    })
     setResumeParsing(true)
     try {
       const r = await parseCandidateResume(detail.id, allowExternal)
@@ -127,7 +147,7 @@ export default function Candidates({ toast, backendUp, goto }) {
     } catch (e) { toast(e.message.includes('400') ? '无法解析该文件（支持 txt/md/docx/pdf）' : '解析失败') } finally { setResumeParsing(false) }
   }
   const doDeleteResume = async () => {
-    if (!detail || !confirm('删除该候选人简历？')) return
+    if (!detail || !await askConfirm({ title: '删除候选人简历', message: '删除后附件和解析结果都将移除。', confirmLabel: '删除' })) return
     try { await deleteCandidateResume(detail.id); toast('已删除'); const fresh = await getCandidatesKanban(); setKanban(fresh); setDetail(fresh.flatMap(g => g.items).find(x => x.id === detail.id)) }
     catch { toast('删除失败') }
   }
@@ -145,6 +165,7 @@ export default function Candidates({ toast, backendUp, goto }) {
 
   const stageLabel = k => CANDIDATE_STAGES.find(s => s.key === k)?.label || k
   const stageColor = k => CANDIDATE_STAGES.find(s => s.key === k)?.color || '#64748b'
+  const detailReq = detail ? reqs.find(r => r.id === detail.requisition_id) : null
 
   return (
     <>
@@ -226,6 +247,8 @@ export default function Candidates({ toast, backendUp, goto }) {
               <div><span className="hint">期望月薪</span><br />{fmtMoney(detail.expected_salary)}</div>
               <div><span className="hint">Offer 月薪</span><br /><b style={{ color: '#d97706' }}>{fmtMoney(detail.offer_amount)}</b></div>
               <div><span className="hint">评分</span><br />{detail.eval_score ?? '—'}</div>
+              <div><span className="hint">需求预算</span><br />{detailReq?.salary_min || detailReq?.salary_max ? `${fmtMoney(detailReq.salary_min)} – ${fmtMoney(detailReq.salary_max)}/月` : '—'}</div>
+              <div><span className="hint">需求口径</span><br />{detailReq ? `${detailReq.job_family || '—'} · ${detailReq.grade || '—'} · ${detailReq.city || '—'}` : '—'}</div>
             </div>
             {detail.reject_reason && <div className="hint" style={{ marginTop: 8, color: '#dc2626' }}>淘汰原因：{detail.reject_reason}</div>}
 
@@ -239,6 +262,12 @@ export default function Candidates({ toast, backendUp, goto }) {
                   <div><span className="hint">相对基准位置</span><br /><b style={{ color: suggest.current?.positionLabel === '超出带宽' ? '#dc2626' : '#10b981' }}>{suggest.current?.position ?? '—'}{suggest.current?.position != null ? `%（${suggest.current.positionLabel}）` : ''}</b></div>
                 </div>
                 <div className="hint" style={{ marginTop: 6 }}>{suggest.note}</div>
+              </div>
+            )}
+            {!suggest && suggestUnavailable && (
+              <div style={{ marginTop: 12, background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 10, padding: 12 }}>
+                <b style={{ fontSize: 13 }}>暂无线性可用的定薪带宽</b>
+                <Hint style={{ marginTop: 4 }}>{suggestUnavailable}</Hint>
               </div>
             )}
 

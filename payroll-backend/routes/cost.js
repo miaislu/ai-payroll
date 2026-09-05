@@ -220,7 +220,7 @@ cost.get('/unit', (req, res) => {
     laborCostRatio: total ? Math.round(gross / total * 1000) / 10 : 0, // 应发占公司成本比（含社保等）
     socialFundBurden: gross ? Math.round(socialFund / gross * 1000) / 10 : 0, // 社保公积金占应发比
     recruitingBurden: total ? Math.round(recExp / total * 1000) / 10 : 0, // 招聘成本占公司成本比
-    note: '人均成本 = 公司口径总成本 ÷ 在职人数；社保公积金负担 ≈ 26%+7% 费率'
+    note: '人均成本 = 公司口径总成本 ÷ 在职人数；社保公积金负担按本账期实际计算的公司缴费 ÷ 应发工资得出'
   })
 })
 

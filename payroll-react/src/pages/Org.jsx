@@ -48,7 +48,8 @@ export default function Org({ toast, backendUp }) {
         <div style={{ marginTop: 14 }}>
           <Hint>各顶层部门 编制 vs 实际：</Hint>
           <table>
-            <tr><th>部门</th><th>实际</th><th>编制（年末）</th><th>缺口</th></tr>
+            <thead><tr><th>部门</th><th>实际</th><th>编制（年末）</th><th>缺口</th></tr></thead>
+            <tbody>
             {overview?.departments.map(d => (
               <tr key={d.id}>
                 <td><b>{d.name}</b></td>
@@ -57,6 +58,7 @@ export default function Org({ toast, backendUp }) {
                 <td style={{ color: d.planned - d.actual > 0 ? '#d97706' : '#10b981' }}>{d.planned - d.actual > 0 ? '+' + (d.planned - d.actual) : d.planned - d.actual}</td>
               </tr>
             ))}
+            </tbody>
           </table>
         </div>
       </Card>

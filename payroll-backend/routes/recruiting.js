@@ -12,6 +12,7 @@ import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
 import { categoryOf } from '../lib/validators.js'
 import { isDate, isPeriod } from '../lib/periods.js'
 import { upsertCompensationTerm } from '../lib/employee_terms.js'
+import { buildOfferApprovalContext } from '../lib/approvals.js'
 
 export const recruiting = Router()
 
@@ -461,9 +462,10 @@ recruiting.post('/candidates/:id/offer-approval', (req, res) => {
   const title = `Offer 审批 · ${c.name}（${r?.job_family || ''} ${r?.grade || ''}）`
   const key = `现金 ¥${c.offer_amount.toLocaleString('zh-CN')}/月${pos !== null ? ` · 上海3-5年Fabless基准 ${pos}%分位(${posLabel})` : ' · 无同口径已审批带宽'}`
   const summary = `来源 ${c.source_channel} · 期望 ¥${c.expected_salary?.toLocaleString('zh-CN') || '—'}/月` + (c.eval_score ? ` · 评分 ${c.eval_score}` : '')
+  const payload = { kind: 'offer', candidate_id: c.id, offer_context: buildOfferApprovalContext(c.id) }
   inTransaction(() => {
-    db.prepare("INSERT INTO approvals(id,type,title,who,key,summary,status,page,ref_type,ref_id,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, 'offer', title, `${req.user.name} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, key, summary, 'pending', 'offer-approval', 'candidate', c.id, req.user.id)
+    db.prepare("INSERT INTO approvals(id,type,title,who,key,summary,status,page,ref_type,ref_id,payload_json,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, 'offer', title, `${req.user.name} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, key, summary, 'pending', 'offer-approval', 'candidate', c.id, JSON.stringify(payload), req.user.id)
     db.prepare("UPDATE candidates SET offer_status='pending' WHERE id=?").run(c.id)
     audit(req.user, 'submit_offer_approval', 'candidate', c.id, { offer_status: c.offer_status }, { offer_status: 'pending', approval_id: id })
   })

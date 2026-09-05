@@ -3,10 +3,12 @@ import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getChannels, createChannel, updateChannel, deleteChannel, createChannelExpense, deleteChannelExpense, getRecruitingStats } from '../api.js'
 import { formatWanInt } from '../lib/format.js'
 import { currentPeriod } from '../lib/period.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const TYPE_LABEL = { job_board: '招聘平台', headhunter: '猎头', employee_ref: '内推', university: '校园招聘', other: '其他' }
 
 export default function Channels({ toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [list, setList] = useState(null)
   const [stats, setStats] = useState(null)
   const [editing, setEditing] = useState(null)
@@ -27,7 +29,7 @@ export default function Channels({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
   const del = async c => {
-    if (!confirm('删除渠道「' + c.name + '」及其费用记录？')) return
+    if (!await askConfirm({ title: '删除招聘渠道', message: `将删除渠道“${c.name}”及其费用记录。`, confirmLabel: '删除' })) return
     try { await deleteChannel(c.id); toast('已删除'); load() } catch { toast('删除失败') }
   }
   const addExpense = async () => {
@@ -38,7 +40,7 @@ export default function Channels({ toast, backendUp }) {
     } catch { toast('记录失败') }
   }
   const delExpense = async (channelId, eid) => {
-    if (!confirm('删除该费用记录？')) return
+    if (!await askConfirm({ title: '删除费用记录', message: '删除后该笔费用将不再计入招聘成本。', confirmLabel: '删除' })) return
     try { await deleteChannelExpense(eid); toast('已删除'); load() } catch { toast('删除失败') }
   }
 
@@ -58,7 +60,8 @@ export default function Channels({ toast, backendUp }) {
           <Btn primary onClick={() => { setForm({ name: '', type: 'job_board', contact: '', note: '' }); setEditing('new') }}>+ 添加渠道</Btn>
         </div>
         <table>
-          <tr><th>渠道</th><th>类型</th><th>联系人</th><th>备注</th><th>费用记录</th><th>操作</th></tr>
+          <thead><tr><th>渠道</th><th>类型</th><th>联系人</th><th>备注</th><th>费用记录</th><th>操作</th></tr></thead>
+          <tbody>
           {list?.map(c => (
             <tr key={c.id}>
               <td><b>{c.name}</b></td>
@@ -83,6 +86,7 @@ export default function Channels({ toast, backendUp }) {
             </tr>
           ))}
           {list && !list.length && <tr><td colSpan={6}><Hint>暂无渠道</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

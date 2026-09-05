@@ -4,9 +4,11 @@ import Chart from '../components/Chart.jsx'
 import { getCostForecast, getCostUnit, getDepartments, getHeadcountPlans, createHeadcountPlan, deleteHeadcountPlan } from '../api.js'
 import { formatWan } from '../lib/format.js'
 import { addMonths, currentPeriod } from '../lib/period.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 
 export default function Forecast({ toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [data, setData] = useState(null)
   const [unit, setUnit] = useState(null)
   const [plans, setPlans] = useState(null)
@@ -35,7 +37,7 @@ export default function Forecast({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
   const delPlan = async p => {
-    if (!confirm('删除 ' + p.department + ' ' + p.year_month + ' 的编制记录？')) return
+    if (!await askConfirm({ title: '删除编制计划', message: `确认删除 ${p.department} ${p.year_month} 的编制记录？成本预测会立即更新。`, confirmLabel: '删除' })) return
     try { await deleteHeadcountPlan(p.id); toast('已删除'); load() } catch { toast('删除失败') }
   }
   const deptName = id => depts.find(d => d.id === id)?.name || '—'
@@ -48,7 +50,7 @@ export default function Forecast({ toast, backendUp }) {
       <div className="grid g4">
         <Kpi label="当前人均成本/月" num={unit ? '¥' + unit.perCapitaMonthly.toLocaleString('zh-CN') : '—'} sub={unit?.period} numColor="#2f54eb" />
         <Kpi label="年化人均成本" num={unit ? formatWan(unit.perCapitaAnnual) : '—'} sub="公司口径 · 含社保公积金" numColor="#7c3aed" />
-        <Kpi label="社保公积金负担" num={unit ? unit.socialFundBurden + '%' : '—'} sub="占应发工资比（≈26%+7%）" numColor="#d97706" />
+        <Kpi label="社保公积金负担" num={unit ? unit.socialFundBurden + '%' : '—'} sub="公司实际缴费占应发工资比" numColor="#d97706" />
         <Kpi label="招聘成本负担" num={unit ? unit.recruitingBurden + '%' : '—'} sub="占公司成本比" numColor="#dc2626" />
       </div>
 
@@ -64,7 +66,8 @@ export default function Forecast({ toast, backendUp }) {
             <Hint style={{ marginTop: 6 }}>编制 = 手动编制计划 + 🎯 进行中招聘需求（按预计到岗月自动计入）；需求关闭/取消自动移除</Hint>
             <div style={{ marginTop: 12 }}>
               <table>
-                <tr><th>月份</th><th>预测成本</th><th>编制人数</th><th>手动编制</th><th>招聘需求</th><th>当前人数</th><th>各部门明细</th></tr>
+                <thead><tr><th>月份</th><th>预测成本</th><th>编制人数</th><th>手动编制</th><th>招聘需求</th><th>当前人数</th><th>各部门明细</th></tr></thead>
+                <tbody>
                 {data.series.map(s => (
                   <tr key={s.period}>
                     <td><b>{s.period}</b></td>
@@ -76,6 +79,7 @@ export default function Forecast({ toast, backendUp }) {
                     <td className="hint">{s.detail.map(d => `${d.name} ${d.count}人${d.source === 'requisition' ? '🎯' : d.source === 'both' ? '(含🎯)' : ''}`).join(' · ')}</td>
                   </tr>
                 ))}
+                </tbody>
               </table>
             </div>
           </>
@@ -91,7 +95,7 @@ export default function Forecast({ toast, backendUp }) {
             <Kpi label="招聘成本占比" num={unit.recruitingBurden + '%'} sub="渠道费用 ÷ 公司成本" />
           </div>
         )}
-        <Hint style={{ marginTop: 8 }}>{unit?.note}。半导体初创场景参考：模拟/数字设计岗公司口径成本约为月薪的 1.4 倍（26%+7% 社保公积金 + 期权摊销）。</Hint>
+        <Hint style={{ marginTop: 8 }}>{unit?.note}。各员工公司成本以所在城市、账期的已核验政策参数和实际期权授予台账为准，不使用固定倍数估算。</Hint>
       </Card>
 
       <Card title={<>编制计划管理 <Chip kind="info">{plans?.length || 0} 条</Chip></>} style={{ marginTop: 14 }}>
@@ -101,7 +105,8 @@ export default function Forecast({ toast, backendUp }) {
           <Btn primary onClick={() => setAdding(true)}>+ 新增编制</Btn>
         </div>
         <table>
-          <tr><th>部门</th><th>月份</th><th>编制人数</th><th>备注</th><th>操作</th></tr>
+          <thead><tr><th>部门</th><th>月份</th><th>编制人数</th><th>备注</th><th>操作</th></tr></thead>
+          <tbody>
           {plans?.map(p => (
             <tr key={p.id}>
               <td><b>{p.department}</b></td>
@@ -112,6 +117,7 @@ export default function Forecast({ toast, backendUp }) {
             </tr>
           ))}
           {plans && !plans.length && <tr><td colSpan={5}><Hint>暂无编制计划，新增后成本预测立即联动</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

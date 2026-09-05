@@ -3,12 +3,14 @@ import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getRequisitions, createRequisition, updateRequisition, deleteRequisition, getDepartments } from '../api.js'
 import { REQUISITION_STATUS, DIRECTIONS } from '../data.js'
 import { addMonths, currentPeriod } from '../lib/period.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const EMPTY = { title: '', department_id: null, job_family: '模拟IC设计', grade: 'P5', city: '上海', headcount: 1, priority: 'normal', status: 'open', salary_min: 30000, salary_max: 50000, reason: '', target_month: addMonths(currentPeriod(), 2) }
 const statusKind = k => ({ open: 'ok', interview: 'info', draft: 'gray', closed: 'gray', cancelled: 'warn' }[k] || 'gray')
 const statusLabel = k => REQUISITION_STATUS.find(s => s.key === k)?.label || k
 
 export default function Requisitions({ toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [list, setList] = useState(null)
   const [depts, setDepts] = useState([])
   const [editing, setEditing] = useState(null)
@@ -31,7 +33,7 @@ export default function Requisitions({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
   const del = async r => {
-    if (!confirm('确认删除需求「' + r.title + '」？关联候选人保留')) return
+    if (!await askConfirm({ title: '删除招聘需求', message: `确认删除“${r.title}”？关联候选人会保留，但不再关联该需求。`, confirmLabel: '删除' })) return
     try { await deleteRequisition(r.id); toast('已删除'); load() } catch { toast('删除失败') }
   }
 
@@ -44,7 +46,8 @@ export default function Requisitions({ toast, backendUp }) {
           <Btn primary onClick={() => open('new')}>+ 新建需求</Btn>
         </div>
         <table>
-          <tr><th>岗位</th><th>部门</th><th>职级</th><th>城市</th><th>编制</th><th>预计到岗</th><th>进度</th><th>预算区间/月</th><th>状态</th><th>操作</th></tr>
+          <thead><tr><th>岗位</th><th>部门</th><th>职级</th><th>城市</th><th>编制</th><th>预计到岗</th><th>进度</th><th>预算区间/月</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
           {list?.map(r => (
             <tr key={r.id}>
               <td><b>{r.title}</b>{r.priority === 'high' && <Chip kind="warn">高优</Chip>}</td>
@@ -63,6 +66,7 @@ export default function Requisitions({ toast, backendUp }) {
             </tr>
           ))}
           {list && !list.length && <tr><td colSpan={10}><Hint>暂无招聘需求</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

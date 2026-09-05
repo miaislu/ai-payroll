@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getInterviews, createInterview, updateInterview, deleteInterview, getCandidates } from '../api.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const EMPTY = { candidate_id: null, round_no: 1, interviewer: '', result: 'pending', score: '', notes: '' }
 const resultKind = r => ({ pass: 'ok', fail: 'warn', pending: 'gray' }[r] || 'gray')
 const resultLabel = r => ({ pass: '通过', fail: '不通过', pending: '待定' }[r] || r)
 
 export default function Interviews({ toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [list, setList] = useState(null)
   const [cands, setCands] = useState([])
   const [editing, setEditing] = useState(null)
@@ -29,7 +31,7 @@ export default function Interviews({ toast, backendUp }) {
     } catch { toast('保存失败') }
   }
   const del = async iv => {
-    if (!confirm('删除该面试记录？')) return
+    if (!await askConfirm({ title: '删除面试记录', message: '删除后该记录将不再作为招聘和 Offer 审批依据。', confirmLabel: '删除' })) return
     try { await deleteInterview(iv.id); toast('已删除'); load() } catch { toast('删除失败') }
   }
 
@@ -42,7 +44,8 @@ export default function Interviews({ toast, backendUp }) {
           <Btn primary onClick={() => open('new')}>+ 记录面试</Btn>
         </div>
         <table>
-          <tr><th>候选人</th><th>轮次</th><th>面试官</th><th>日期</th><th>结果</th><th>评分</th><th>评价</th><th>操作</th></tr>
+          <thead><tr><th>候选人</th><th>轮次</th><th>面试官</th><th>日期</th><th>结果</th><th>评分</th><th>评价</th><th>操作</th></tr></thead>
+          <tbody>
           {list?.map(iv => (
             <tr key={iv.id}>
               <td><b>{iv.candidate_name || '（已删除候选人）'}</b></td>
@@ -59,6 +62,7 @@ export default function Interviews({ toast, backendUp }) {
             </tr>
           ))}
           {list && !list.length && <tr><td colSpan={8}><Hint>暂无面试记录</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

@@ -113,6 +113,24 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   const unverifiedReference = await request(base, '/api/recruiting/offer/suggest?job_family=%E6%A8%A1%E6%8B%9FIC%E8%AE%BE%E8%AE%A1&annual_cash=500000&city=%E4%B8%8A%E6%B5%B7', { cookie: hr })
   assert.equal(unverifiedReference.response.status, 404)
 
+  const unverifiedDistribution = await request(base, '/api/dashboard/distribution?category=all&period=2025-06', { cookie: hr })
+  assert.equal(unverifiedDistribution.response.status, 200, JSON.stringify(unverifiedDistribution.data))
+  assert.equal(unverifiedDistribution.data.refP50, null)
+  const unverifiedAttrition = await request(base, '/api/dashboard/attrition', { cookie: hr })
+  assert.equal(unverifiedAttrition.response.status, 200, JSON.stringify(unverifiedAttrition.data))
+  assert.ok(unverifiedAttrition.data.every(item => item.p50 === null), '未核验带宽不得进入留才判断')
+
+  const approvalList = await request(base, '/api/approvals', { cookie: hr })
+  assert.equal(approvalList.response.status, 200, JSON.stringify(approvalList.data))
+  const seededOffer = approvalList.data.find(item => item.type === 'offer')
+  assert.ok(seededOffer?.offer_context, 'Offer 审批应提供完整决策上下文')
+  assert.equal(seededOffer.offer_context.candidate.name, '吴敏')
+  assert.ok(seededOffer.offer_context.candidate.expected_salary > 0)
+  assert.ok(seededOffer.offer_context.requisition.salary_min > 0)
+  assert.equal(seededOffer.offer_context.benchmark, null)
+  assert.match(seededOffer.offer_context.benchmark_note, /未核验|暂无/)
+  assert.ok(Array.isArray(seededOffer.offer_context.interviews))
+
   const approval = await request(base, '/api/approvals', { cookie: hr, method: 'POST', body: {
     type: 'band', title: '测试审批', payload: { direction: '数字验证', source: 'integration-test-fixture', to: { p25: 30, p50: 40, p75: 50 } }
   } })

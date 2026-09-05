@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Stepper } from '../components/ui.jsx'
 import { TYPE_LABEL, CAN_APPROVE } from '../data.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const BAND_APPROVE = '带宽由 HR 或 CEO 审批'
 const MONEY_APPROVE = '该项由财务或 CEO 审批'
@@ -184,6 +185,7 @@ export function OptionApprovalPage({ approvals, act, toast, user }) {
 
 // ── F2 Offer 审批 ──
 export function OfferApprovalPage({ approvals, act, toast, user, goto }) {
+  const { prompt: askPrompt } = useDialog()
   const canAct = CAN_APPROVE(user?.role, 'offer')
   const real = approvals?.find(a => a.type === 'offer' && a.ref && a.status === 'pending')
     || approvals?.find(a => a.type === 'offer' && a.ref)
@@ -199,27 +201,61 @@ export function OfferApprovalPage({ approvals, act, toast, user, goto }) {
     )
   }
   const c = real.ref
-  const approve = () => {
+  const context = real.offer_context || real.payload?.offer_context || {}
+  const candidate = context.candidate || c || {}
+  const requisition = context.requisition
+  const benchmark = context.benchmark
+  const interviews = context.interviews || []
+  const money = value => value != null ? `¥${Number(value).toLocaleString('zh-CN')}/月` : '—'
+  const approve = async () => {
     if (!canAct) return toast(MONEY_APPROVE)
-    const comment = prompt('审批意见（可选）：', '带宽内，同意') || ''
+    const comment = await askPrompt({ title: '同意发出 Offer', label: '审批意见（可选）', defaultValue: benchmark ? `${benchmark.position_label}，同意` : '材料已复核，同意', confirmLabel: '确认同意' })
+    if (comment === null) return
     act(real.id, 'approved', real.key, comment)
     toast('已同意 Offer，候选人状态已更新')
   }
-  const reject = () => {
+  const reject = async () => {
     if (!canAct) return toast(MONEY_APPROVE)
-    const comment = prompt('驳回理由：') || ''
+    const comment = await askPrompt({ title: '驳回 Offer', label: '驳回理由', required: true, confirmLabel: '确认驳回' })
+    if (comment === null) return
     act(real.id, 'rejected', undefined, comment)
     toast('已驳回')
   }
   return (
     <>
-      <Card><Stepper steps={['① 招聘需求', '② AI 对标建议', '③ 财务/CEO 审批', '④ 发出 Offer']} current={real.status === 'pending' ? 2 : 3} /></Card>
+      <Card><Stepper steps={['① 招聘需求', '② 对标与材料复核', '③ 财务/CEO 审批', '④ 发出 Offer']} current={real.status === 'pending' ? 2 : 3} /></Card>
       <Card title={<>{real.title} <Chip kind="info">{real.id}</Chip></>}>
         <div className="grid g3" style={{ marginBottom: 10 }}>
-          <div className="card kpi" style={{ margin: 0 }}><div className="label">候选人</div><div className="num" style={{ fontSize: 20 }}>{c?.name || '—'}</div><div className="sub flat">{real.summary}</div></div>
-          <div className="card kpi" style={{ margin: 0 }}><div className="label">Offer 现金</div><div className="num" style={{ fontSize: 20, color: '#d97706' }}>{c?.offer_amount != null ? `¥${c.offer_amount.toLocaleString('zh-CN')}/月` : '—'}</div><div className="sub flat">申请：{real.key}</div></div>
+          <div className="card kpi" style={{ margin: 0 }}><div className="label">候选人</div><div className="num" style={{ fontSize: 20 }}>{candidate.name || '—'}</div><div className="sub flat">来源 {candidate.source_channel || '—'} · 评分 {candidate.eval_score ?? '—'}</div></div>
+          <div className="card kpi" style={{ margin: 0 }}><div className="label">Offer 现金</div><div className="num" style={{ fontSize: 20, color: '#d97706' }}>{money(candidate.offer_amount)}</div><div className="sub flat">候选人期望：{money(candidate.expected_salary)}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">审批状态</div><div className="num" style={{ fontSize: 18, color: real.status === 'approved' ? 'var(--ok)' : real.status === 'rejected' ? '#dc2626' : '#f59e0b' }}>{real.status === 'approved' ? '已通过' : real.status === 'rejected' ? '已驳回' : '待审批'}</div><div className="sub flat">发起人：{real.who}</div></div>
         </div>
+        <div className="grid g2" style={{ marginBottom: 10 }}>
+          <div className="card" style={{ margin: 0 }}>
+            <b>招聘需求与预算</b>
+            <Hint style={{ marginTop: 6 }}>{requisition ? `${requisition.title} · ${requisition.job_family || '—'} · ${requisition.grade || '—'} · ${requisition.city || '—'}` : '未关联招聘需求'}</Hint>
+            <Hint>月薪预算：{requisition ? `${money(requisition.salary_min)} – ${money(requisition.salary_max)}` : '—'}</Hint>
+            {requisition?.reason && <Hint>招聘理由：{requisition.reason}</Hint>}
+          </div>
+          <div className="card" style={{ margin: 0 }}>
+            <b>已审批带宽</b>
+            {benchmark ? (
+              <>
+                <Hint style={{ marginTop: 6 }}>{benchmark.scope}</Hint>
+                <Hint>P25 / P50 / P75：{benchmark.p25} / {benchmark.p50} / {benchmark.p75} 万</Hint>
+                <Hint>Offer 位于约 P{benchmark.position}（{benchmark.position_label}）· 样本 {benchmark.sample || 0}</Hint>
+              </>
+            ) : <Hint style={{ marginTop: 6 }}>{context.benchmark_note || '暂无可复核的已审批带宽。'}</Hint>}
+          </div>
+        </div>
+        <Card title={`面试记录（${interviews.length} 轮）`} style={{ margin: '0 0 10px' }}>
+          {interviews.length ? (
+            <table>
+              <thead><tr><th>轮次</th><th>面试官</th><th>日期</th><th>结果</th><th>评分</th><th>评价</th></tr></thead>
+              <tbody>{interviews.map((item, index) => <tr key={`${item.round_no}-${index}`}><td>{item.round_no}</td><td>{item.interviewer || '—'}</td><td>{item.interview_date || '—'}</td><td>{item.result || '—'}</td><td>{item.score ?? '—'}</td><td className="hint">{item.notes || '—'}</td></tr>)}</tbody>
+            </table>
+          ) : <Hint>暂无面试记录；审批前应补齐面试证据。</Hint>}
+        </Card>
         {real.status !== 'pending' && (
           <Hint style={{ marginBottom: 10 }}>审批人：{real.action_by || '—'} · {real.action_at || ''}{real.comment ? ` · 意见：${real.comment}` : ''}</Hint>
         )}

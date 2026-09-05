@@ -3,6 +3,7 @@ import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getDepartments, getEmployeeEvents, createEmployeeEvent, deleteEmployeeEvent } from '../api.js'
 import { DIRECTIONS, CITIES } from '../data.js'
 import { currentDate, currentPeriod } from '../lib/period.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
 const SUPPORT_FAMILIES = ['财务', '人力资源', '行政', '市场', '法务', '采购', '质量体系']
@@ -19,6 +20,7 @@ const emptyEmployee = () => ({ name: '', grade: 'P4', job_family: '模拟IC设�
 const EV_EMPTY = { type: 'onboard', event_date: '', from_value: '', to_value: '', note: '' }
 
 export default function Employees({ toast, backendUp, openProfile }) {
+  const { confirm: askConfirm } = useDialog()
   const [list, setList] = useState(null)
   const [depts, setDepts] = useState([])
   const [editing, setEditing] = useState(null)
@@ -78,7 +80,7 @@ export default function Employees({ toast, backendUp, openProfile }) {
     } catch { toast('记录失败') }
   }
   const delEvent = async id => {
-    if (!confirm('删除该事件？')) return
+    if (!await askConfirm({ title: '删除员工事件', message: '删除后对应的入转调离记录将从档案中移除。', confirmLabel: '删除' })) return
     try { await deleteEmployeeEvent(id); setEvents(await getEmployeeEvents(eventView.id)) } catch { toast('删除失败') }
   }
 
@@ -94,8 +96,8 @@ export default function Employees({ toast, backendUp, openProfile }) {
           <Btn primary onClick={() => open('new')}>+ 新增员工</Btn>
         </div>
         <table>
-          <tr><th>姓名</th><th>类别</th><th>用工</th><th>职级</th><th>岗位</th><th>部门</th><th>性别</th><th>城市</th><th>月薪</th><th>手机</th><th>状态</th><th>操作</th></tr>
-          {list?.map(e => (
+          <thead><tr><th>姓名</th><th>类别</th><th>用工</th><th>职级</th><th>岗位</th><th>部门</th><th>性别</th><th>城市</th><th>月薪</th><th>手机</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>{list?.map(e => (
             <tr key={e.id}>
               <td><b>{e.name}</b></td>
               <td><Chip kind={e.category === 'tech' ? 'info' : e.category === 'support' ? 'gray' : 'warn'}>{CAT_LABEL[e.category] || '技术'}</Chip></td>
@@ -114,6 +116,7 @@ export default function Employees({ toast, backendUp, openProfile }) {
             </tr>
           ))}
           {list && !list.length && <tr><td colSpan={12}><Hint>暂无员工（后端不可用或数据为空）</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

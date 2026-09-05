@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getExpenseClaims, createExpenseClaim, expenseClaimAction, deleteExpenseClaim, getAdvances, createAdvance, advanceAction, deleteAdvance } from '../api.js'
 import { CAN_FINANCE } from '../data.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const EXPENSE_TYPES = ['差旅', '餐饮', '交通', '办公', '招待', '其他']
 const CLAIM_STATUS = { submitted: ['待审批', 'warn'], approved: ['已通过', 'ok'], rejected: ['已驳回', 'bad'], paid: ['已打款', 'info'], draft: ['草稿', 'gray'] }
@@ -10,6 +11,7 @@ const CLAIM_EMPTY = { expense_type: '差旅', amount: '', claim_date: new Date()
 const ADV_EMPTY = { amount: '', reason: '', advance_date: new Date().toISOString().slice(0, 10) }
 
 export default function Expenses({ toast, backendUp, user }) {
+  const { confirm: askConfirm, prompt: askPrompt } = useDialog()
   const canAct = CAN_FINANCE(user?.role)
   const [claims, setClaims] = useState(null)
   const [advances, setAdvances] = useState(null)
@@ -37,17 +39,22 @@ export default function Expenses({ toast, backendUp, user }) {
     catch { toast('申请失败') }
   }
   const actClaim = async (c, action) => {
-    const comment = action === 'reject' ? (prompt('驳回理由：') || '') : (action === 'pay' ? '' : (prompt('审批意见（可选）：') || ''))
+    let comment = ''
+    if (action !== 'pay') {
+      comment = await askPrompt({ title: action === 'reject' ? '驳回报销' : '通过报销', label: action === 'reject' ? '驳回理由' : '审批意见（可选）', required: action === 'reject', confirmLabel: action === 'reject' ? '确认驳回' : '确认通过' })
+      if (comment === null) return
+    }
     try { await expenseClaimAction(c.id, { action, comment }); toast(action === 'approve' ? '已通过' : action === 'reject' ? '已驳回' : '已标记打款'); load() }
     catch { toast('操作失败') }
   }
   const actAdv = async (a, action) => {
-    const comment = action === 'reject' ? (prompt('驳回理由：') || '') : (prompt('审批意见（可选）：') || '')
+    const comment = await askPrompt({ title: action === 'reject' ? '驳回预支' : action === 'repay' ? '确认还款结清' : '批准预支', label: action === 'reject' ? '驳回理由' : '审批意见（可选）', required: action === 'reject', confirmLabel: action === 'reject' ? '确认驳回' : '确认处理' })
+    if (comment === null) return
     try { await advanceAction(a.id, { action, comment }); toast('已处理'); load() }
     catch { toast('操作失败') }
   }
-  const delClaim = async c => { if (!confirm('删除该报销单？')) return; try { await deleteExpenseClaim(c.id); toast('已删除'); load() } catch (e) { toast(e.message.includes('400') ? '已审批的报销不可删除' : '删除失败') } }
-  const delAdv = async a => { if (!confirm('删除该预支？')) return; try { await deleteAdvance(a.id); toast('已删除'); load() } catch (e) { toast(e.message.includes('400') ? '已审批的预支不可删除' : '删除失败') } }
+  const delClaim = async c => { if (!await askConfirm({ title: '删除报销单', message: '确认删除该报销单？已审批记录仍会被后端拒绝删除。', confirmLabel: '删除' })) return; try { await deleteExpenseClaim(c.id); toast('已删除'); load() } catch (e) { toast(e.message.includes('400') ? '已审批的报销不可删除' : '删除失败') } }
+  const delAdv = async a => { if (!await askConfirm({ title: '删除预支', message: '确认删除该预支？已审批记录仍会被后端拒绝删除。', confirmLabel: '删除' })) return; try { await deleteAdvance(a.id); toast('已删除'); load() } catch (e) { toast(e.message.includes('400') ? '已审批的预支不可删除' : '删除失败') } }
 
   const claimStatus = s => CLAIM_STATUS[s] || [s, 'gray']
   const advStatus = s => ADV_STATUS[s] || [s, 'gray']
@@ -67,7 +74,8 @@ export default function Expenses({ toast, backendUp, user }) {
           <Btn primary onClick={() => setClaimForm(CLAIM_EMPTY)}>+ 提交报销</Btn>
         </div>
         <table>
-          <tr><th>员工</th><th>类型</th><th>金额</th><th>发生日期</th><th>说明</th><th>核销预支</th><th>状态</th><th>审批</th><th>操作</th></tr>
+          <thead><tr><th>员工</th><th>类型</th><th>金额</th><th>发生日期</th><th>说明</th><th>核销预支</th><th>状态</th><th>审批</th><th>操作</th></tr></thead>
+          <tbody>
           {claims?.map(c => (
             <tr key={c.id}>
               <td><b>{c.employee_name}</b></td>
@@ -93,6 +101,7 @@ export default function Expenses({ toast, backendUp, user }) {
             </tr>
           ))}
           {claims && !claims.length && <tr><td colSpan={9}><Hint>暂无报销单</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 
@@ -103,7 +112,8 @@ export default function Expenses({ toast, backendUp, user }) {
           <Btn primary onClick={() => setAdvForm(ADV_EMPTY)}>+ 申请预支</Btn>
         </div>
         <table>
-          <tr><th>员工</th><th>金额</th><th>事由</th><th>申请日期</th><th>未核销</th><th>状态</th><th>审批</th><th>操作</th></tr>
+          <thead><tr><th>员工</th><th>金额</th><th>事由</th><th>申请日期</th><th>未核销</th><th>状态</th><th>审批</th><th>操作</th></tr></thead>
+          <tbody>
           {advances?.map(a => (
             <tr key={a.id}>
               <td><b>{a.employee_name}</b></td>
@@ -126,6 +136,7 @@ export default function Expenses({ toast, backendUp, user }) {
             </tr>
           ))}
           {advances && !advances.length && <tr><td colSpan={8}><Hint>暂无预支</Hint></td></tr>}
+          </tbody>
         </table>
       </Card>
 

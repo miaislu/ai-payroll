@@ -17,8 +17,8 @@ export const Stepper = ({ steps, current }) => (
   </div>
 )
 
-export const Btn = ({ primary, sm, children, onClick, disabled }) => (
-  <button className={`btn ${primary ? 'primary' : ''} ${sm ? 'sm' : ''}`} onClick={onClick} disabled={disabled}>{children}</button>
+export const Btn = ({ primary, sm, children, onClick, disabled, ...props }) => (
+  <button className={`btn ${primary ? 'primary' : ''} ${sm ? 'sm' : ''}`} onClick={onClick} disabled={disabled} {...props}>{children}</button>
 )
 
 export const Kpi = ({ label, num, sub, numColor }) => (

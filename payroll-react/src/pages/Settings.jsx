@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getUsers, getAuditLogs, createUser, resetUserPassword, deleteUser, getEmployees, getMarketSummary, ingestMarket } from '../api.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const EMPTY = { username: '', password: '', role: 'hr', name: '', employee_id: '' }
 
 export default function Settings({ toast, backendUp, user }) {
+  const { confirm: askConfirm } = useDialog()
   const isFounder = user?.role === 'founder'
   const canMarket = user?.role === 'founder' || user?.role === 'hr'
   const [users, setUsers] = useState(null)
@@ -63,7 +65,7 @@ export default function Settings({ toast, backendUp, user }) {
     } catch (e) { toast(e.message || '重置失败') }
   }
   const remove = async u => {
-    if (!confirm(`删除账号 ${u.username}？`)) return
+    if (!await askConfirm({ title: '删除账号', message: `确认删除账号 ${u.username}？该账号之后将无法登录。`, confirmLabel: '删除账号' })) return
     try {
       await deleteUser(u.id)
       toast('已删除')

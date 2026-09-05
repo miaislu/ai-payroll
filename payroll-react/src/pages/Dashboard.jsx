@@ -47,7 +47,7 @@ export default function Dashboard({ goto, backendUp, user, approvals }) {
   }, [role, backendUp])
 
   if (role === 'emp') {
-    const tax = empView?.items?.find(i => i.label.includes('个税'))?.value
+    const tax = empView?.items?.find(i => i.label.includes('个人所得税') || i.label.includes('个税'))?.value
     return (
       <>
         <div className="grid g4">
@@ -170,7 +170,7 @@ export default function Dashboard({ goto, backendUp, user, approvals }) {
             ))}
           </div>
           <Chart type="bar" data={distData} color="#38bdf8" ySuffix="K" refLine={dist.refP50 ? { value: dist.refP50, label: `市场 P50 ${dist.refP50}K` } : null} />
-          <Hint style={{ marginTop: 10 }}>{CATEGORIES.find(c => c[0] === cat)[1]}岗 {dist.count || 0} 人 · 职级平均月薪；技术岗参考市场 P50（{dist.refP50}K）</Hint>
+          <Hint style={{ marginTop: 10 }}>{CATEGORIES.find(c => c[0] === cat)[1]}岗 {dist.count || 0} 人 · 职级平均月薪；{dist.refP50 ? `技术岗参考已审批市场 P50（${dist.refP50}K）` : '暂无已审批市场带宽，不展示市场参考线'}</Hint>
         </Card>
       </div>
 
@@ -182,11 +182,13 @@ export default function Dashboard({ goto, backendUp, user, approvals }) {
         </Card>
         <Card title={<>留才预警 <Chip kind={d.attrition.length ? 'warn' : 'ok'}>{d.attrition.length} 人</Chip></>}>
           <table>
-            <tr><th>员工</th><th>岗位</th><th>年薪</th><th>带宽 P50</th><th>风险</th></tr>
-            {d.attrition.map(a => (
-              <tr key={a.name}><td>{a.name}</td><td>{a.job_family}</td><td>{a.annual}万</td><td>{a.p50 ? a.p50 + '万' : '—'}</td><td><Chip kind={a.risk === '高' ? 'bad' : 'warn'}>{a.risk}</Chip></td></tr>
-            ))}
-            {!d.attrition.length && <tr><td colSpan={5}><Hint>当前无预警对象</Hint></td></tr>}
+            <thead><tr><th>员工</th><th>岗位</th><th>年薪</th><th>带宽 P50</th><th>风险</th></tr></thead>
+            <tbody>
+              {d.attrition.map(a => (
+                <tr key={a.name}><td>{a.name}</td><td>{a.job_family}</td><td>{a.annual}万</td><td>{a.p50 ? a.p50 + '万' : '—'}</td><td><Chip kind={a.risk === '高' ? 'bad' : 'warn'}>{a.risk}</Chip></td></tr>
+              ))}
+              {!d.attrition.length && <tr><td colSpan={5}><Hint>当前无预警对象</Hint></td></tr>}
+            </tbody>
           </table>
         </Card>
       </div>

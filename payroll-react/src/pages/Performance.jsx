@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
 import { getPerformance, savePerformance, deletePerformance, raiseFromPerformance, getEmployees } from '../api.js'
 import { currentCycle, cycleOptions } from '../lib/period.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const RATINGS = ['S', 'A', 'B', 'C', 'D']
 const EMPTY = { employee_id: '', cycle: currentCycle(), rating: 'A', score: '', comment: '' }
 
 export default function Performance({ toast, backendUp, user, goto }) {
+  const { confirm: askConfirm } = useDialog()
   const isAdmin = user?.role === 'hr' || user?.role === 'founder'
   const [cycle, setCycle] = useState(currentCycle())
   const [rows, setRows] = useState([])
@@ -40,7 +42,7 @@ export default function Performance({ toast, backendUp, user, goto }) {
     } catch (e) { toast(e.message || '发起失败') }
   }
   const remove = async row => {
-    if (!confirm(`删除 ${row.name} ${row.cycle} 绩效？`)) return
+    if (!await askConfirm({ title: '删除绩效记录', message: `确认删除 ${row.name} 的 ${row.cycle} 绩效？`, confirmLabel: '删除' })) return
     try { await deletePerformance(row.id); toast('已删除'); load() } catch (e) { toast(e.message || '删除失败') }
   }
 

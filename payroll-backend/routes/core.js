@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { audit, db, inTransaction } from '../db.js'
 import { auth } from '../lib/auth.js'
 import { benchmarkCard } from '../lib/calc.js'
-import { applyApproval, mergeActionPayload, nextApprovalId, normalizeApprovalPayload, presentApproval } from '../lib/approvals.js'
+import { applyApproval, buildOfferApprovalContext, mergeActionPayload, nextApprovalId, normalizeApprovalPayload, presentApproval } from '../lib/approvals.js'
 import { canApprove, HR_ROLES, OPS_ROLES } from '../lib/access.js'
 
 export const core = Router()
@@ -37,6 +37,7 @@ core.get('/approvals', auth(OPS_ROLES), (req, res) => {
     })
     const empId = presented.payload?.employee_id
     if (empId && emps[empId]) presented.employee = emps[empId]
+    if (a.type === 'offer') presented.offer_context = presented.payload?.offer_context || buildOfferApprovalContext(a.ref_id || presented.payload?.candidate_id)
     return presented
   }))
 })
@@ -47,6 +48,7 @@ core.get('/approvals/:id', auth(OPS_ROLES), (req, res) => {
   const presented = presentApproval(a)
   if (a.ref_type === 'candidate') presented.ref = db.prepare('SELECT id, name, offer_amount, stage FROM candidates WHERE id=?').get(a.ref_id) || null
   if (presented.payload?.employee_id) presented.employee = db.prepare('SELECT id, name, grade, job_family, monthly_base FROM employees WHERE id=?').get(presented.payload.employee_id) || null
+  if (a.type === 'offer') presented.offer_context = presented.payload?.offer_context || buildOfferApprovalContext(a.ref_id || presented.payload?.candidate_id)
   res.json(presented)
 })
 

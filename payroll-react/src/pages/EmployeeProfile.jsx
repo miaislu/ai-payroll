@@ -9,6 +9,7 @@ import {
   createFamily, deleteFamily,
   getResumes, uploadResume, parseResume, applyResume, deleteResume, downloadResume
 } from '../api.js'
+import { useDialog } from '../components/DialogProvider.jsx'
 
 const MARITAL = ['已婚', '未婚', '离异', '其他']
 const GENDERS = ['男', '女', '其他']
@@ -75,6 +76,7 @@ function Section({ title, children, extra }) {
 }
 
 export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
+  const { confirm: askConfirm } = useDialog()
   const [data, setData] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -121,7 +123,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
     } catch { toast('添加失败') }
   }
   const del = async (kind, id) => {
-    if (!confirm('确认删除该记录？')) return
+    if (!await askConfirm({ title: '删除档案记录', message: '删除后无法从当前页面恢复。', confirmLabel: '删除' })) return
     try {
       if (kind === 'contact') await deleteEmergencyContact(id)
       else if (kind === 'edu') await deleteEducation(id)
@@ -145,7 +147,11 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
     } catch { toast('上传失败（支持 txt/md/docx/pdf，≤10MB）') } finally { setUploading(false) }
   }
   const doParse = async rid => {
-    const allowExternal = confirm('是否允许将脱敏后的简历正文发送给已配置的外部 AI？\n选择“取消”将仅使用本地规则解析。')
+    const allowExternal = await askConfirm({
+      title: '选择简历解析方式',
+      message: '允许后将脱敏后的简历正文发送给已配置的外部 AI；选择“仅本地解析”不会发送正文。',
+      confirmLabel: '允许并解析', cancelLabel: '仅本地解析'
+    })
     setParsing(rid)
     try {
       const r = await parseResume(empId, rid, allowExternal)
@@ -164,7 +170,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
     } catch { toast('应用失败（请先解析）') }
   }
   const doDeleteResume = async rid => {
-    if (!confirm('删除该简历附件？')) return
+    if (!await askConfirm({ title: '删除简历附件', message: '删除后附件及对应解析结果将被移除。', confirmLabel: '删除' })) return
     try { await deleteResume(empId, rid); toast('已删除'); load() } catch { toast('删除失败') }
   }
 
@@ -274,8 +280,8 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
         </div>
         {resumes.length ? (
           <table>
-            <tr><th>文件名</th><th>大小</th><th>上传时间</th><th>解析状态</th><th>操作</th></tr>
-            {resumes.map(r => (
+            <thead><tr><th>文件名</th><th>大小</th><th>上传时间</th><th>解析状态</th><th>操作</th></tr></thead>
+            <tbody>{resumes.map(r => (
               <tr key={r.id}>
                 <td><b>{r.original_name || r.filename}</b></td>
                 <td>{(r.size / 1024).toFixed(1)} KB</td>
@@ -293,7 +299,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
                   <Btn sm onClick={() => doDeleteResume(r.id)}>删除</Btn>
                 </td>
               </tr>
-            ))}
+            ))}</tbody>
           </table>
         ) : <Hint>暂无简历，点击「上传简历」开始（支持 AI 解析 txt/md/docx/pdf）</Hint>}
       </Section>

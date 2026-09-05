@@ -22,6 +22,43 @@ export function presentApproval(row, extras = {}) {
   return { ...row, payload, ...extras }
 }
 
+function offerBandPosition(annualCashWan, band) {
+  if (!band?.p25 || !band?.p75) return null
+  if (annualCashWan <= band.p25) return Math.max(5, Math.round((annualCashWan / band.p25) * 25))
+  if (annualCashWan >= band.p75) return Math.min(95, Math.round(75 + ((annualCashWan - band.p75) / band.p75) * 20))
+  return Math.round(25 + ((annualCashWan - band.p25) / (band.p75 - band.p25)) * 50)
+}
+
+// Offer 审批使用创建时快照；旧审批缺少快照时也可用此函数补齐只读上下文。
+export function buildOfferApprovalContext(candidateId) {
+  const candidate = db.prepare('SELECT id,name,source_channel,apply_date,expected_salary,offer_amount,eval_score,requisition_id FROM candidates WHERE id=?').get(candidateId)
+  if (!candidate) return null
+  const requisition = candidate.requisition_id
+    ? db.prepare('SELECT id,title,job_family,grade,city,salary_min,salary_max,reason FROM job_requisitions WHERE id=?').get(candidate.requisition_id) || null
+    : null
+  const interviews = db.prepare('SELECT round_no,interviewer,interview_date,result,score,notes FROM interviews WHERE candidate_id=? ORDER BY round_no,id').all(candidate.id)
+  const band = requisition?.city === '上海'
+    ? db.prepare('SELECT direction,p25,p50,p75,sample,evidence FROM benchmarks WHERE direction=? AND verified=1').get(requisition.job_family) || null
+    : null
+  const position = band ? offerBandPosition((candidate.offer_amount || 0) * 12 / 10000, band) : null
+  return {
+    candidate,
+    requisition,
+    interviews,
+    benchmark: band ? {
+      ...band,
+      scope: '上海 · 3-5年 · Fabless · 现金年薪',
+      position,
+      position_label: position < 25 ? '低于带宽' : position > 75 ? '超出带宽' : '带宽内'
+    } : null,
+    benchmark_note: band
+      ? '仅使用已经审批的同口径带宽。'
+      : requisition?.city !== '上海'
+        ? '当前带宽口径仅覆盖上海，未对其他城市做系数外推。'
+        : '暂无同岗位族、同口径的已审批带宽；未核验数据不会用于审批判断。'
+  }
+}
+
 export function normalizeApprovalPayload(type, input = {}) {
   const payload = { kind: type, ...(input && typeof input === 'object' ? input : {}) }
   if (type === 'band') {

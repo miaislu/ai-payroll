@@ -53,7 +53,7 @@ export const createApproval = body => api('/approvals', { method: 'POST', body }
 export const getBenchmarkDirections = () => api('/benchmarks/directions')
 export const getBenchmarkCard = params => api('/benchmarks?' + new URLSearchParams(params).toString())
 export const getPayroll = period => api('/payroll/' + period)
-export const submitPayroll = period => api('/payroll/' + period + '/submit', { method: 'POST', body: {} })
+export const submitPayroll = (period, overrideReason = '') => api('/payroll/' + period + '/submit', { method: 'POST', body: { override_reason: overrideReason } })
 export const askCopilot = (question, sessionId, allowExternal = false) => api('/copilot/ask', { method: 'POST', body: { question, sessionId, allow_external: allowExternal } })
 export const clearCopilot = sessionId => api('/copilot/clear', { method: 'POST', body: { sessionId } })
 export const getCopilotConfig = () => api('/copilot/config')
