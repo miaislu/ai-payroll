@@ -10,11 +10,16 @@ export function parseHash(hash = '') {
     const empId = Number(parts[1])
     return { page, empId: Number.isInteger(empId) && empId > 0 ? empId : null }
   }
+  if (['candidates', 'interviews'].includes(page)) {
+    const candidateId = Number(parts[1])
+    return { page, empId: null, candidateId: Number.isInteger(candidateId) && candidateId > 0 ? candidateId : null }
+  }
   return { page, empId: null }
 }
 
 export function toHash(page, empId) {
   if (page === 'employee-profile' && empId) return `#/employee-profile/${empId}`
+  if (['candidates', 'interviews'].includes(page) && empId) return `#/${page}/${empId}`
   return `#/${page || 'dashboard'}`
 }
 
@@ -25,5 +30,6 @@ export function resolvePage(role, page, empId) {
     return { page: views.includes('employees') ? 'employees' : views[0], empId: null }
   }
   const next = views.includes(page) ? page : views[0]
+  if (['candidates', 'interviews'].includes(next)) return { page: next, empId: null, candidateId: Number.isInteger(empId) && empId > 0 ? empId : null }
   return { page: next, empId: null }
 }

@@ -10,6 +10,9 @@ import {
   getResumes, uploadResume, parseResume, applyResume, deleteResume, downloadResume
 } from '../api.js'
 import { useDialog } from '../components/DialogProvider.jsx'
+import { JOB_CATALOG, SPECIAL_DEDUCTIONS, parseSpecialDeductions } from '../jobCatalog.js'
+import { ResumeParsingStatus, ResumeParsingDialog, ResumeResultSummary, RESUME_FIELD_LABELS, resumeEngineInfo, readResumeResult } from '../components/ResumeParsing.jsx'
+import { ResumeProfileEditor } from '../components/ResumeProfile.jsx'
 
 const MARITAL = ['已婚', '未婚', '离异', '其他']
 const GENDERS = ['男', '女', '其他']
@@ -85,6 +88,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
   // 简历与 AI 解析
   const [resumes, setResumes] = useState([])
   const [parsing, setParsing] = useState(null) // 正在解析的 rid
+  const [parseTarget, setParseTarget] = useState(null)
   const [preview, setPreview] = useState(null) // 解析结果预览 {rid, parsed, name}
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef(null)
@@ -144,30 +148,28 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
       await uploadResume(empId, file)
       toast('简历已上传：' + file.name)
       load()
-    } catch { toast('上传失败（支持 txt/md/docx/pdf，≤10MB）') } finally { setUploading(false) }
+    } catch { toast('上传失败（支持 txt/md/docx/pdf/xlsx/xls，≤10MB）') } finally { setUploading(false) }
   }
-  const doParse = async rid => {
-    const allowExternal = await askConfirm({
-      title: '选择简历解析方式',
-      message: '允许后将脱敏后的简历正文发送给已配置的外部 AI；选择“仅本地解析”不会发送正文。',
-      confirmLabel: '允许并解析', cancelLabel: '仅本地解析'
-    })
+  const doParse = async (rid, mode = 'rules') => {
+    if (parsing) return
     setParsing(rid)
     try {
-      const r = await parseResume(empId, rid, allowExternal)
+      const r = await parseResume(empId, rid, mode)
       const name = resumes.find(x => x.id === rid)?.original_name || '简历'
-      setPreview({ rid, name, parsed: r.parsed, engine: r.engine })
-      toast('解析完成（' + r.engine + '）')
+      setPreview({ rid, name, parsed: r.parsed, engine: r.engine, result_token: r.result_token })
+      setParseTarget(null)
+      toast((mode === 'local_model' ? '本地模型解析' : '基础提取') + '已完成，请核对后应用')
       load()
-    } catch (e) { toast(e.message.includes('400') ? '无法解析该文件（支持 txt/md/docx/pdf）' : '解析失败') } finally { setParsing(null) }
+    } catch (e) { throw e } finally { setParsing(null) }
   }
   const doApply = async () => {
     if (!preview) return
+    if (!await askConfirm({ title: '更新员工个人信息', message: '确认后将更新已识别的个人信息与对应经历。' + (preview.replaceExperience ? '你已选择用本次结果替换现有教育和工作经历；原记录会保存在应用历史中。' : '同一段经历会更新，其他已有经历保留。') + '未识别到的个人字段保留原值。', confirmLabel: '确认写入' })) return
     try {
-      const r = await applyResume(empId, preview.rid)
+      const r = await applyResume(empId, preview.rid, { result_token: preview.result_token, personal_profile: preview.edited || preview.parsed, replace_experience: preview.replaceExperience === true })
       toast(`已应用：基础 ${r.applied.basic} · 教育 ${r.applied.education} · 工作经历 ${r.applied.work_experience}`)
       setPreview(null); load()
-    } catch { toast('应用失败（请先解析）') }
+    } catch (error) { toast('更新失败：' + error.message) }
   }
   const doDeleteResume = async rid => {
     if (!await askConfirm({ title: '删除简历附件', message: '删除后附件及对应解析结果将被移除。', confirmLabel: '删除' })) return
@@ -176,9 +178,11 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
 
   if (!data) return <Card><Hint>档案加载中…</Hint></Card>
   const e = data.employee
-  const dept = e.department || '—'
   const statusChip = e.status === 'departed' ? <Chip kind="warn">离职</Chip> : e.status === 'offer' ? <Chip kind="info">发offer</Chip> : <Chip kind="ok">在职</Chip>
   const age = e.date_of_birth ? Math.floor((Date.now() - new Date(e.date_of_birth)) / 31557600000) : null
+  const deductionItems = parseSpecialDeductions(e.special_deductions_json, e.special_deduction)
+  const deductionText = SPECIAL_DEDUCTIONS.filter(def => deductionItems[def.key]?.enabled)
+    .map(def => `${def.label} ¥${Number(deductionItems[def.key].amount || 0).toLocaleString('zh-CN')}${def.annual ? '/年' : '/月'}`).join('；')
 
   return (
     <>
@@ -187,10 +191,14 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
         <Btn sm onClick={() => goto('employees')}>← 返回员工列表</Btn>
         <div style={{ flex: 1 }} />
         <span className="chip info">👤 {e.name}</span>
-        <span className="chip info">{e.grade} · {e.job_family}</span>
-        <span className="chip gray">{dept}</span>
+        <span className="chip info">{e.job_family}</span>
         {statusChip}
       </div>
+
+      {data.recruitment_candidate && <Card title="简历库关联">
+        <Hint>来自人选：{data.recruitment_candidate.name} · {data.recruitment_candidate.source_channel || '其他'}。可在本档案上传最新简历、编辑基础信息和补充教育 / 工作经历。</Hint>
+        <Btn sm onClick={() => goto('candidates', data.recruitment_candidate.id)}>查看人选及流转记录</Btn>
+      </Card>}
 
       <div className="grid g2" style={{ marginTop: 4 }}>
         <Section title="基本信息" extra={<Btn sm onClick={openEdit}>✏️ 编辑</Btn>}>
@@ -213,6 +221,17 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
           <InfoRow label="户籍地址" value={e.permanent_address} />
         </Section>
       </div>
+
+      <Section title="岗位与薪酬约定">
+        <div className="grid g2">
+          <InfoRow label="岗位分类" value={`${JOB_CATALOG[e.category]?.label || '技术'} / ${e.job_family}`} />
+          <InfoRow label="月薪" value={e.monthly_base != null ? `¥${Number(e.monthly_base).toLocaleString('zh-CN')}` : '—'} />
+          <InfoRow label="固定薪资" value={`${Number(e.fixed_salary_months ?? 12)} 个月`} />
+          <InfoRow label="年终奖约定" value={`${Number(e.annual_bonus_months ?? 0)} 个月`} />
+          <InfoRow label="目标年现金" value={`¥${Math.round(Number(e.monthly_base || 0) * (Number(e.fixed_salary_months ?? 12) + Number(e.annual_bonus_months ?? 0))).toLocaleString('zh-CN')}`} />
+          <InfoRow label="专项扣除" value={deductionText || '未勾选'} />
+        </div>
+      </Section>
 
       <div className="grid g2">
         <Section title="合同与社保" extra={<Btn sm onClick={openEdit}>✏️ 编辑</Btn>}>
@@ -271,11 +290,12 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
       </Section>
 
       {/* 简历附件 + AI 解析（上传 → 解析 → 预览确认 → 一键应用） */}
-      <Section title={<>简历与 AI 解析 <Chip kind="info">{resumes.length} 份</Chip></>} style={{ marginTop: 14 }}>
+      <Section title={<>简历与解析 <Chip kind="info">{resumes.length} 份</Chip></>} style={{ marginTop: 14 }}>
+        <ResumeParsingStatus />
         <div className="toolbar">
-          <Hint>上传简历（txt/md/docx/pdf，≤10MB）→ 选择本地规则或脱敏后调用外部 AI → 预览确认 → 一键填充档案</Hint>
+          <Hint>支持 txt/md/docx/pdf/xlsx/xls，≤10MB。上传简历 → 选择提取方式 → 核对结果 → 确认应用到档案。</Hint>
           <div style={{ flex: 1 }} />
-          <input ref={fileRef} type="file" accept=".txt,.md,.text,.docx,.pdf" style={{ display: 'none' }} onChange={onPickFile} />
+          <input ref={fileRef} type="file" accept=".txt,.md,.text,.docx,.pdf,.xlsx,.xls" style={{ display: 'none' }} onChange={onPickFile} />
           <Btn primary disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? '上传中…' : '📄 上传简历'}</Btn>
         </div>
         {resumes.length ? (
@@ -290,18 +310,18 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
                   {r.parse_status === 'applied' ? <Chip kind="ok">已应用</Chip>
                     : r.parse_status === 'parsed' ? <Chip kind="info">已解析</Chip>
                     : <Chip kind="gray">待解析</Chip>}
-                  {r.parse_engine && <span className="hint"> · {r.parse_engine}</span>}
+                  {(r.parse_engine || r.parsed_data) && <span className="hint"> · {resumeEngineInfo(r.parse_engine || readResumeResult(r.parsed_data)?.engine).label}</span>}
                 </td>
                 <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <Btn sm disabled={parsing === r.id} onClick={() => doParse(r.id)}>{parsing === r.id ? '解析中…' : '🤖 AI 解析'}</Btn>
-                  <Btn sm onClick={() => setPreview({ rid: r.id, name: r.original_name, parsed: r.parsed_data ? JSON.parse(r.parsed_data) : null, engine: r.parse_engine, saved: true })} disabled={!r.parsed_data}>预览</Btn>
+                  <Btn sm disabled={Boolean(parsing)} onClick={() => setParseTarget(r)}>{parsing === r.id ? '解析中…' : '选择解析方式'}</Btn>
+                  <Btn sm onClick={() => setPreview({ rid: r.id, name: r.original_name, parsed: readResumeResult(r.parsed_data), engine: r.parse_engine, saved: true, applied: r.parse_status === 'applied', result_token: r.result_token })} disabled={!r.parsed_data}>预览 / 更新个人信息</Btn>
                   <Btn sm onClick={() => downloadResume(empId, r.id, r.original_name || r.filename).catch(() => toast('下载失败'))}>下载</Btn>
                   <Btn sm onClick={() => doDeleteResume(r.id)}>删除</Btn>
                 </td>
               </tr>
             ))}</tbody>
           </table>
-        ) : <Hint>暂无简历，点击「上传简历」开始（支持 AI 解析 txt/md/docx/pdf）</Hint>}
+        ) : <Hint>暂无简历，点击“上传简历”开始。复杂经历可直接在档案中手动补充。</Hint>}
       </Section>
 
       {/* 编辑弹窗 */}
@@ -388,18 +408,24 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
         </Modal>
       )}
 
+      {parseTarget && <ResumeParsingDialog filename={parseTarget.original_name || parseTarget.filename}
+        busy={Boolean(parsing)} onClose={() => setParseTarget(null)} onBasicParse={() => doParse(parseTarget.id, 'rules')} onModelParse={() => doParse(parseTarget.id, 'local_model')} />}
+
       {/* 简历解析结果预览 */}
       {preview && (
         <Modal onClose={() => setPreview(null)}>
           <div className="modal" style={{ width: 640, maxHeight: '86vh', overflowY: 'auto' }}>
-            <h3>🤖 AI 解析结果 · {preview.name}</h3>
-            {preview.engine && <Hint>解析引擎：{preview.engine}{preview.saved && preview.parsed?.engine ? '（' + preview.parsed.engine + '）' : ''}</Hint>}
+            <h3>提取结果核对 · {preview.name}</h3>
+            <ResumeResultSummary parsed={preview.parsed} engine={preview.engine} />
+            <Hint>{preview.applied ? '此结果曾应用到档案，可校正后再次更新。' : '已识别，尚未更新个人信息。请核对后点击「确认写入个人信息」。'}</Hint>
+            {preview.editing && <ResumeProfileEditor value={preview.edited || preview.parsed} onChange={value => setPreview({ ...preview, edited: value })} />}
             {preview.parsed ? (
               <>
+                {!preview.editing && <>
                 <div className="nav-sep" style={{ padding: '10px 0 4px' }}>基本信息</div>
                 <div className="grid g2" style={{ fontSize: 13 }}>
                   {Object.entries(preview.parsed.basic || {}).filter(([, v]) => v).map(([k, v]) => (
-                    <div key={k}><span className="hint">{k}</span><br /><b>{Array.isArray(v) ? v.join(', ') : String(v)}</b></div>
+                    <div key={k}><span className="hint">{RESUME_FIELD_LABELS[k] || k}</span><br /><b>{Array.isArray(v) ? v.join('、') : String(v)}</b></div>
                   ))}
                   {!Object.keys(preview.parsed.basic || {}).length && <Hint>未提取到基本信息</Hint>}
                 </div>
@@ -415,15 +441,21 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
                   <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, margin: '5px 0', fontSize: 13 }}>
                     <b>{x.company}</b>{x.title ? ' · ' + x.title : ''}
                     <span className="hint">{x.start_date ? ' · ' + x.start_date + ' ~ ' + (x.end_date || '至今') : ''}</span>
+                    {x.note && <div className="hint" style={{ whiteSpace: 'pre-wrap', marginTop: 5 }}>{x.note}</div>}
                   </div>
                 ))}
-                <div className="row">
+                </>}
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, marginTop: 14 }}>
+                  <input type="checkbox" checked={Boolean(preview.replaceExperience)} onChange={event => setPreview({ ...preview, replaceExperience: event.target.checked })} />
+                  用本次结果替换现有教育和工作经历（用于清理旧的错误记录；未识别到的整个经历类别会保留）
+                </label>
+                <div className="row resume-review-actions">
                   <Btn onClick={() => setPreview(null)}>关闭</Btn>
-                  {!preview.saved && <Btn primary onClick={doApply}>✅ 应用到档案</Btn>}
-                  {preview.saved && preview.parsed && <Hint style={{ marginRight: 'auto' }}>该简历已解析（{preview.parsed.engine}），如需重新应用请先「AI 解析」</Hint>}
+                  {!preview.editing && <Btn onClick={() => setPreview({ ...preview, editing: true })}>校正识别内容</Btn>}
+                  <Btn primary onClick={doApply}>确认写入个人信息</Btn>
                 </div>
               </>
-            ) : <Hint>该简历已解析过，请在列表点「预览」查看已保存的结果，或重新执行 AI 解析。</Hint>}
+            ) : <Hint>未找到已保存的提取结果，可返回文件列表重新选择提取方式。</Hint>}
           </div>
         </Modal>
       )}

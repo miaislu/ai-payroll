@@ -16,8 +16,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.2.1",
-    "mammoth": "^1.12.1",
-    "multer": "^2.2.0",
-    "pdf-parse": "^2.4.5"
+    "multer": "^2.4.0",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "^3.4.0"
   }
 }

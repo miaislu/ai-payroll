@@ -1,6 +1,7 @@
 import { db } from '../db.js'
 import { periodIsLocked, upsertCompensationTerm } from './employee_terms.js'
 import { addMonths, currentPeriod, isPeriod } from './periods.js'
+import { candidateEvent } from './candidate_workflow.js'
 
 export function parsePayload(row) {
   try { return JSON.parse(row?.payload_json || '{}') } catch { return {} }
@@ -31,16 +32,17 @@ function offerBandPosition(annualCashWan, band) {
 
 // Offer 审批使用创建时快照；旧审批缺少快照时也可用此函数补齐只读上下文。
 export function buildOfferApprovalContext(candidateId) {
-  const candidate = db.prepare('SELECT id,name,source_channel,apply_date,expected_salary,offer_amount,eval_score,requisition_id FROM candidates WHERE id=?').get(candidateId)
+  const candidate = db.prepare('SELECT id,name,source_channel,apply_date,expected_salary,expected_salary_range,offer_amount,eval_score,requisition_id FROM candidates WHERE id=?').get(candidateId)
   if (!candidate) return null
   const requisition = candidate.requisition_id
-    ? db.prepare('SELECT id,title,job_family,grade,city,salary_min,salary_max,reason FROM job_requisitions WHERE id=?').get(candidate.requisition_id) || null
+    ? db.prepare('SELECT id,title,job_family,job_category,city,salary_min,salary_max,fixed_salary_months,annual_bonus_months,reason,responsibilities,requirements,education_requirement,experience_requirement,skills FROM job_requisitions WHERE id=?').get(candidate.requisition_id) || null
     : null
-  const interviews = db.prepare('SELECT round_no,interviewer,interview_date,result,score,notes FROM interviews WHERE candidate_id=? ORDER BY round_no,id').all(candidate.id)
+  const interviews = db.prepare("SELECT round_no,interviewer,interview_date,result,score,notes FROM interviews WHERE candidate_id=? AND status='completed' ORDER BY round_no,id").all(candidate.id)
   const band = requisition?.city === '上海'
     ? db.prepare('SELECT direction,p25,p50,p75,sample,evidence FROM benchmarks WHERE direction=? AND verified=1').get(requisition.job_family) || null
     : null
-  const position = band ? offerBandPosition((candidate.offer_amount || 0) * 12 / 10000, band) : null
+  const annualMonths = Number(requisition?.fixed_salary_months ?? 12) + Number(requisition?.annual_bonus_months ?? 0)
+  const position = band ? offerBandPosition((candidate.offer_amount || 0) * annualMonths / 10000, band) : null
   return {
     candidate,
     requisition,
@@ -123,7 +125,10 @@ export function applyApproval(approval, extras = {}) {
   const kind = payload.kind || approval.type
   if (kind === 'offer') {
     const refId = approval.ref_type === 'candidate' ? approval.ref_id : payload.candidate_id
-    if (refId) db.prepare("UPDATE candidates SET offer_status='approved' WHERE id=?").run(refId)
+    if (refId) {
+      db.prepare("UPDATE candidates SET offer_status='approved' WHERE id=?").run(refId)
+      candidateEvent(Number(refId), { name: approval.action_by || '审批人' }, 'offer_approved', { note: 'Offer 审批通过，可确认录用并关联员工档案' })
+    }
     return { applied: 'offer', payload }
   }
   if (kind === 'band') {

@@ -1,4 +1,4 @@
-# 小公司人力管理系统 · 架构
+# HR 管理系统 · 架构
 
 > 基于 `ai-payroll` MVP 扩展。参考 [Frappe HR](https://github.com/frappe/hrms) 的模块切分（Employee / Recruitment / Payroll / Performance），保持 Node + Express + `node:sqlite` 与 React + Vite。
 > 目标画像：**30–150 人小公司**（演示种子是半导体初创），HR 1–2 人，CEO 兼兜底审批，**财务审发钱类事项**。

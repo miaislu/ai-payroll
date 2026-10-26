@@ -1,30 +1,60 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, Chip, Hint, Btn, Field, Modal } from '../components/ui.jsx'
-import { getCandidatesKanban, getRequisitions, createCandidate, setCandidateStage, updateCandidate, getOfferSuggest, getInterviews, createInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, deleteCandidateResume, downloadCandidateResume } from '../api.js'
-import { CANDIDATE_STAGES } from '../data.js'
+import { getCandidatesKanban, getRequisitions, getChannels, createCandidate, createCandidateFromResume, setCandidateStage, updateCandidate, getOfferSuggest, createInterview, updateInterview, onboardCandidate, createOfferApproval, uploadCandidateResume, parseCandidateResume, applyCandidateResume, deleteCandidateResume, downloadCandidateResume } from '../api.js'
+import { CANDIDATE_STAGES, INTERVIEW_RATINGS, interviewRating, candidateStatusLabel, INTERVIEW_STATUS_LABELS } from '../data.js'
 import { useDialog } from '../components/DialogProvider.jsx'
+import { currentDate } from '../lib/period.js'
+import { EXPECTED_SALARY_RANGES, expectedSalaryRange, expectedSalaryLabel, exactExpectedSalary } from '../lib/candidate-salary.js'
+import { ResumeParsingStatus, ResumeParsingDialog, ResumeResultSummary, RESUME_FIELD_LABELS,
+  readResumeResult, resumeEngineInfo } from '../components/ResumeParsing.jsx'
+import { ResumeProfileDetails, ResumeProfileEditor } from '../components/ResumeProfile.jsx'
+import { mergeResumeProfile } from '../lib/resume-profile.js'
+import RequisitionMatcher from '../components/RequisitionMatcher.jsx'
 
-const EMPTY = { name: '', phone: '', email: '', source_channel: '内推', requisition_id: null, stage: 'new', expected_salary: 30000, apply_date: '' }
+const EMPTY = { name: '', phone: '', email: '', source_channel: '内推', source_channel_id: null, requisition_id: null, stage: 'new', expected_salary_range: 'none', apply_date: '' }
+const LEGACY_SOURCES = ['内推', '官网', '其他']
 const fmtMoney = v => v ? '¥' + v.toLocaleString('zh-CN') : '—'
+const nextInterviewRound = candidate => Math.max(0, ...(candidate.interviews || []).map(item => Number(item.round_no))) + 1
+const latestInterview = candidate => [...(candidate.interviews || [])].sort((a, b) =>
+  (b.interview_date || '').localeCompare(a.interview_date || '') || b.round_no - a.round_no || b.id - a.id)[0]
+const sourceValue = item => item.source_channel_id ? `channel:${item.source_channel_id}` : `legacy:${item.source_channel || '内推'}`
+const sourcePatch = (value, channels) => {
+  if (value.startsWith('channel:')) {
+    const channel = channels.find(item => item.id === Number(value.slice(8)))
+    return { source_channel_id: channel?.id || null, source_channel: channel?.name || '其他' }
+  }
+  return { source_channel_id: null, source_channel: value.slice(7) || '其他' }
+}
 
-export default function Candidates({ toast, backendUp, goto }) {
+export default function Candidates({ toast, backendUp, goto, candidateId }) {
   const { confirm: askConfirm, prompt: askPrompt } = useDialog()
   const [kanban, setKanban] = useState(null)
   const [reqs, setReqs] = useState([])
+  const [channels, setChannels] = useState([])
   const [adding, setAdding] = useState(false)
+  const [importFile, setImportFile] = useState(null)
+  const [creating, setCreating] = useState(false)
+  const [search, setSearch] = useState('')
+  const [stageFilter, setStageFilter] = useState('')
+  const [profileForm, setProfileForm] = useState(null)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileMatching, setProfileMatching] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [detail, setDetail] = useState(null) // 候选人详情
   const [suggest, setSuggest] = useState(null) // Offer 建议
   const [suggestUnavailable, setSuggestUnavailable] = useState('')
-  const [ivForm, setIvForm] = useState({ round_no: 1, interviewer: '', result: 'pending', score: '', notes: '' })
+  const [ivForm, setIvForm] = useState({ round_no: 1, interviewer: '', interview_date: currentDate(), status: 'scheduled', result: 'pending', notes: '' })
   const [resumeParsing, setResumeParsing] = useState(false)
+  const [parseDialog, setParseDialog] = useState(false)
   const [resumePreview, setResumePreview] = useState(null) // 解析结果预览
   const resumeRef = useRef(null)
 
   const load = async () => {
     try {
-      setKanban(await getCandidatesKanban())
-      setReqs(await getRequisitions())
+      const [candidateGroups, requisitions, recruitmentChannels] = await Promise.all([getCandidatesKanban(), getRequisitions(), getChannels()])
+      setKanban(candidateGroups)
+      setReqs(requisitions)
+      setChannels(recruitmentChannels)
     } catch { toast('候选人数据加载失败') }
   }
   useEffect(() => { load() }, [backendUp])
@@ -32,35 +62,43 @@ export default function Candidates({ toast, backendUp, goto }) {
   const set = k => e => setForm({ ...form, [k]: ['expected_salary', 'requisition_id'].includes(k) ? +e.target.value : e.target.value })
 
   const saveNew = async () => {
-    if (!form.name.trim()) return toast('候选人姓名必填')
+    if (adding === 'manual' && !form.name.trim()) return toast('候选人姓名必填')
+    if (adding === 'upload' && !importFile) return toast('请选择简历文件')
+    if (importFile?.size > 10 * 1024 * 1024) return toast('文件超过 10MB')
+    if (creating) return
+    setCreating(true)
     try {
-      await createCandidate({ ...form, apply_date: form.apply_date || new Date().toISOString().slice(0, 10) })
-      toast('已添加候选人')
-      setAdding(false); setForm(EMPTY); load()
-    } catch { toast('添加失败') }
+      const payload = { ...form, apply_date: form.apply_date || currentDate() }
+      const created = adding === 'upload' ? await createCandidateFromResume(importFile, payload) : await createCandidate(payload)
+      toast(created.warning || (adding === 'upload' ? '已建档并完成基础规则提取，请核对资料' : '已建立人选档案'))
+      setAdding(false); setForm(EMPTY); setImportFile(null)
+      await load()
+      goto('candidates', created.id)
+    } catch (error) { toast('建档失败：' + error.message) } finally { setCreating(false) }
   }
 
-  const move = async (c, dir) => {
-    const idx = CANDIDATE_STAGES.findIndex(s => s.key === c.stage)
-    const next = CANDIDATE_STAGES[Math.max(0, Math.min(CANDIDATE_STAGES.length - 1, idx + dir))]
-    if (next.key === c.stage) return
-    const reject_reason = next.key === 'rejected'
+  const changeStage = async stage => {
+    if (!detail) return
+    const reject_reason = stage === 'rejected'
       ? await askPrompt({ title: '淘汰候选人', label: '淘汰原因', required: true, confirmLabel: '确认淘汰' })
       : undefined
-    if (next.key === 'rejected' && reject_reason === null) return
-    try { await setCandidateStage(c.id, { stage: next.key, reject_reason }); toast(`${c.name} → ${next.label}`); load() }
-    catch { toast('流转失败') }
+    if (stage === 'rejected' && reject_reason === null) return
+    if (stage === 'accepted' && !await askConfirm({ title: '确认录用', message: `确认录用 ${detail.name}？录用后可从新增员工页面关联建档。`, confirmLabel: '确认录用' })) return
+    try { await setCandidateStage(detail.id, { stage, reject_reason }); toast('已更新状态并记录流转'); await load() }
+    catch (error) { toast(error.message) }
   }
 
   const openDetail = async c => {
     setDetail(c)
+    setIvForm({ round_no: nextInterviewRound(c), interviewer: '', interview_date: currentDate(), status: 'scheduled', result: 'pending', notes: '' })
     setSuggest(null)
     setSuggestUnavailable(c.stage === 'offer' ? '正在查询同口径已审批带宽…' : '')
     if (c.stage === 'offer' && c.requisition_id) {
       const r = reqs.find(x => x.id === c.requisition_id)
       if (r) {
         try {
-          const s = await getOfferSuggest({ job_family: r.job_family, annual_cash: (c.offer_amount || c.expected_salary || 0) * 12, city: r.city })
+          const annualMonths = Number(r.fixed_salary_months ?? 12) + Number(r.annual_bonus_months ?? 0)
+          const s = await getOfferSuggest({ job_family: r.job_family, annual_cash: (c.offer_amount || exactExpectedSalary(c)) * annualMonths, city: r.city })
           setSuggest(s)
           setSuggestUnavailable('')
         } catch {
@@ -68,28 +106,36 @@ export default function Candidates({ toast, backendUp, goto }) {
         }
       }
     } else if (c.stage === 'offer') {
-      setSuggestUnavailable('候选人尚未关联招聘需求，无法匹配岗位、城市和职级口径。')
+      setSuggestUnavailable('候选人尚未关联招聘需求，无法匹配岗位和城市口径。')
     }
   }
 
+  useEffect(() => {
+    if (!candidateId) { setDetail(null); return }
+    if (!kanban) return
+    const candidate = kanban.flatMap(group => group.items).find(item => item.id === candidateId)
+    if (candidate) openDetail(candidate)
+    else { setDetail(null); toast('未找到该候选人') }
+  }, [candidateId, kanban])
+
   const addInterview = async () => {
     if (!detail) return
+    if (!ivForm.interviewer.trim() || !ivForm.interview_date) return toast('请填写面试官和面试日期')
     try {
-      await createInterview({ candidate_id: detail.id, round_no: +ivForm.round_no || 1, interviewer: ivForm.interviewer, interview_date: new Date().toISOString().slice(0, 10), result: ivForm.result, score: ivForm.score === '' ? null : +ivForm.score, notes: ivForm.notes })
-      toast('已记录面试')
-      setIvForm({ round_no: (detail.interviews?.length || 0) + 1, interviewer: '', result: 'pending', score: '', notes: '' })
+      await createInterview({ ...ivForm, candidate_id: detail.id, round_no: +ivForm.round_no || 1 })
+      toast(ivForm.status === 'scheduled' ? '已安排面试并记录流转' : '已记录面试')
       const fresh = await getCandidatesKanban()
       setKanban(fresh)
       const nc = fresh.flatMap(g => g.items).find(x => x.id === detail.id)
       if (nc) setDetail(nc)
-    } catch { toast('记录失败') }
+    } catch (error) { toast('记录失败：' + error.message) }
   }
 
   const saveOffer = async () => {
     if (!detail) return
     const amount = await askPrompt({
       title: '更新 Offer', label: '现金月薪（元）', inputType: 'number', min: 1,
-      defaultValue: detail.offer_amount || detail.expected_salary || '', required: true,
+      defaultValue: detail.offer_amount || exactExpectedSalary(detail) || '', required: true,
       message: '修改金额会使原有待审批记录自动失效。', confirmLabel: '保存金额'
     })
     if (amount === null) return
@@ -103,16 +149,29 @@ export default function Candidates({ toast, backendUp, goto }) {
     } catch { toast('更新失败') }
   }
 
+  const changeDetailSource = async value => {
+    if (!detail) return
+    try {
+      await updateCandidate(detail.id, sourcePatch(value, channels))
+      const fresh = await getCandidatesKanban()
+      setKanban(fresh)
+      const updated = fresh.flatMap(group => group.items).find(item => item.id === detail.id)
+      if (updated) setDetail(updated)
+      toast('候选人来源渠道已更新')
+    } catch { toast('来源渠道更新失败') }
+  }
+
   // 办理入职：生成员工档案 + 自动记录入职事件（招聘 → 员工 闭环）
   const doOnboard = async () => {
     if (!detail) return
-    const date = await askPrompt({ title: '办理入职', label: '入职日期', inputType: 'date', defaultValue: new Date().toISOString().slice(0, 10), required: true, confirmLabel: '确认入职' })
+    const date = await askPrompt({ title: '关联建立员工档案', label: '入职日期', inputType: 'date', defaultValue: currentDate(), required: true, confirmLabel: '保存建档' })
     if (date === null) return
     try {
       const r = await onboardCandidate(detail.id, { onboard_date: date })
       toast(`🎉 ${r.name} 已入职（员工 #${r.employee_id}，${r.hire_month}）`)
-      setDetail(null); load()
-    } catch (e) { toast(e.message.includes('400') ? '缺少薪资数据，请先填写 Offer 金额' : '入职办理失败') }
+      await load()
+      goto('employee-profile', r.employee_id)
+    } catch (e) { toast('建档失败：' + e.message) }
   }
 
   // ── 简历 AI 解析（线索即结构化：技能标签/岗位族/经验年数）──
@@ -127,24 +186,20 @@ export default function Candidates({ toast, backendUp, goto }) {
       const fresh = await getCandidatesKanban()
       setKanban(fresh)
       setDetail(fresh.flatMap(g => g.items).find(x => x.id === detail.id))
-    } catch { toast('上传失败（支持 txt/md/docx/pdf，≤10MB）') }
+    } catch { toast('上传失败（支持 txt/md/docx/pdf/xlsx/xls，≤10MB）') }
   }
-  const doParseResume = async () => {
-    if (!detail) return
-    const allowExternal = await askConfirm({
-      title: '选择简历解析方式',
-      message: '允许后将脱敏后的简历正文发送给已配置的外部 AI；选择“仅本地解析”不会发送正文。',
-      confirmLabel: '允许并解析', cancelLabel: '仅本地解析'
-    })
+  const doParseResume = async (mode = 'rules') => {
+    if (!detail || resumeParsing) return
     setResumeParsing(true)
     try {
-      const r = await parseCandidateResume(detail.id, allowExternal)
-      setResumePreview(r.parsed)
-      toast(`解析完成（${r.engine}）· 岗位族「${r.parsed.job_family || '未知'}」${r.parsed.experience_years ? '· ' + r.parsed.experience_years + ' 年经验' : ''}`)
+      const r = await parseCandidateResume(detail.id, mode)
+      setResumePreview({ ...r.parsed, result_token: r.result_token })
+      setParseDialog(false)
+      toast((mode === 'local_model' ? '本地模型解析' : '基础提取') + '已完成，请核对结果')
       const fresh = await getCandidatesKanban()
       setKanban(fresh)
       setDetail(fresh.flatMap(g => g.items).find(x => x.id === detail.id))
-    } catch (e) { toast(e.message.includes('400') ? '无法解析该文件（支持 txt/md/docx/pdf）' : '解析失败') } finally { setResumeParsing(false) }
+    } catch (e) { throw e } finally { setResumeParsing(false) }
   }
   const doDeleteResume = async () => {
     if (!detail || !await askConfirm({ title: '删除候选人简历', message: '删除后附件和解析结果都将移除。', confirmLabel: '删除' })) return
@@ -164,92 +219,145 @@ export default function Candidates({ toast, backendUp, goto }) {
   }
 
   const stageLabel = k => CANDIDATE_STAGES.find(s => s.key === k)?.label || k
-  const stageColor = k => CANDIDATE_STAGES.find(s => s.key === k)?.color || '#64748b'
+  const allCandidates = kanban?.flatMap(group => group.items) || []
+  const visibleCandidates = allCandidates.filter(item => (!stageFilter || item.stage === stageFilter)
+    && (!search || [item.name, item.requisition_title, item.source_channel, item.skills].some(value => String(value || '').toLowerCase().includes(search.toLowerCase()))))
   const detailReq = detail ? reqs.find(r => r.id === detail.requisition_id) : null
+  const detailFeeSalary = Number(detail?.offer_amount || exactExpectedSalary(detail))
+  const detailFeeEstimate = detail?.linked_channel_type === 'headhunter' && detailFeeSalary && detail.fee_basis_months && detail.fee_rate != null
+    ? Math.round(detailFeeSalary * Number(detail.fee_basis_months) * Number(detail.fee_rate) / 100)
+    : null
 
   return (
     <>
-      <Card title={<>候选人管线 <Chip kind="info">拖拽流转：◀ ▶ 按钮移动阶段</Chip></>}>
+      <Card title={<>简历库 <Chip kind="info">{allCandidates.length} 位人选</Chip></>}>
         <div className="toolbar">
-          <Hint>半导体岗位招聘看板：新简历 → 初筛 → 面试 → Offer → 已入职；Offer 阶段可引用对标带宽出定薪建议</Hint>
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索姓名、应聘岗位、渠道或技能" aria-label="搜索简历" />
           <div style={{ flex: 1 }} />
-          <Btn primary onClick={() => setAdding(true)}>+ 添加候选人</Btn>
+          <Btn primary onClick={() => { setForm(EMPTY); setImportFile(null); setAdding('choice') }}>+ 添加候选人</Btn>
         </div>
-
-        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
-          {kanban?.map(g => (
-            <div key={g.stage} style={{ flex: '0 0 230px', background: '#f8fafc', borderRadius: 12, padding: 10, border: '1px solid var(--line)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 5, background: stageColor(g.stage) }} />
-                <b style={{ fontSize: 13 }}>{g.label}</b>
-                <Chip kind="gray">{g.items.length}</Chip>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {g.items.map(c => (
-                  <div key={c.id} className="card" style={{ margin: 0, padding: 10, cursor: 'pointer' }} onClick={() => openDetail(c)}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
-                    <div className="hint" style={{ marginTop: 2 }}>{c.requisition_title || '未关联需求'}{c.req_grade ? ' · ' + c.req_grade : ''}</div>
-                    <div className="hint">{c.source_channel} · {c.apply_date?.slice(5)}</div>
-                    {c.expected_salary && <div style={{ fontSize: 12, marginTop: 4 }}>期望 {fmtMoney(c.expected_salary)}<span style={{ color: 'var(--muted)' }}>/月</span></div>}
-                    {c.offer_amount && <div style={{ fontSize: 12, color: '#d97706', fontWeight: 600 }}>Offer {fmtMoney(c.offer_amount)}{c.offer_status === 'approved' ? ' ✅已批' : c.offer_status === 'rejected' ? ' ⛔驳回' : ''}</div>}
-                    {c.eval_score && <Chip kind="info">评分 {c.eval_score}</Chip>}
-                    {c.skills && <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>{c.skills.split(',').slice(0, 3).filter(Boolean).map(s => <span key={s} className="chip gray" style={{ fontSize: 10, padding: '1px 6px' }}>{s.trim()}</span>)}</div>}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                      {['screening', 'interview', 'offer'].includes(c.stage) && <Btn sm onClick={e => { e.stopPropagation(); move(c, -1) }}>◀</Btn>}
-                      {['new', 'screening', 'interview'].includes(c.stage) && <Btn sm onClick={e => { e.stopPropagation(); move(c, 1) }}>▶</Btn>}
-                    </div>
-                  </div>
-                ))}
-                {!g.items.length && <div className="hint" style={{ textAlign: 'center', padding: '10px 0' }}>空</div>}
-              </div>
-            </div>
-          ))}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          <Btn sm primary={!stageFilter} onClick={() => setStageFilter('')}>全部 {allCandidates.length}</Btn>
+          {kanban?.map(group => <Btn sm key={group.stage} primary={stageFilter === group.stage} onClick={() => setStageFilter(group.stage)}>{group.label} {group.items.length}</Btn>)}
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table><thead><tr><th>姓名 / 简历</th><th>应聘岗位</th><th>渠道</th><th>当前状态</th><th>最近面试</th><th>建档日期</th><th>操作</th></tr></thead>
+            <tbody>{visibleCandidates.map(candidate => {
+              const latest = latestInterview(candidate)
+              return <tr key={candidate.id}>
+                <td><b>{candidate.name}</b><div className="hint">{candidate.resume_name || '暂无简历附件'}</div></td>
+                <td>{candidate.requisition_title || '未关联需求'}</td><td>{candidate.source_channel || '—'}</td>
+                <td><Chip kind={['accepted', 'hired'].includes(candidate.stage) ? 'ok' : candidate.stage === 'rejected' ? 'bad' : 'info'}>{candidateStatusLabel(candidate)}</Chip></td>
+                <td>{latest ? <><div>第 {latest.round_no} 轮 · {latest.interview_date}</div><div className="hint">{latest.status === 'completed' ? interviewRating(latest.result).label : INTERVIEW_STATUS_LABELS[latest.status]}</div></> : '尚未安排'}</td>
+                <td>{candidate.apply_date || candidate.created_at?.slice(0, 10)}</td>
+                <td><Btn sm onClick={() => goto('candidates', candidate.id)}>查看 / 流转</Btn></td>
+              </tr>
+            })}</tbody>
+          </table>
+          {!visibleCandidates.length && <Hint>暂无匹配的人选，可上传简历或手动录入建档。</Hint>}
         </div>
       </Card>
 
       {adding && (
         <Modal onClose={() => setAdding(false)}>
-          <div className="modal" style={{ width: 520 }}>
-            <h3>添加候选人</h3>
+          <div className="modal" style={{ width: 620, maxHeight: '88vh', overflowY: 'auto' }}>
+            <h3>{adding === 'choice' ? '添加候选人' : adding === 'upload' ? '上传简历建档' : '手动录入建档'}</h3>
+            {adding === 'choice' ? <>
+              <div className="grid g2">
+                <Btn primary onClick={() => setAdding('upload')}>直接上传简历</Btn>
+                <Btn onClick={() => setAdding('manual')}>手动输入</Btn>
+              </div>
+              <Hint style={{ marginTop: 12 }}>上传后先做基础规则提取并保存原始简历。建档后可在「选择解析方式」中使用本地模型整理完整经历，核对后补充资料。</Hint>
+              <div className="row"><Btn onClick={() => setAdding(false)}>取消</Btn></div>
+            </> : <>
+            {adding === 'upload' && <Field label="简历文件（≤10MB）">
+              <input type="file" accept=".txt,.md,.text,.docx,.pdf,.xlsx,.xls" onChange={e => setImportFile(e.target.files?.[0] || null)} />
+            </Field>}
             <div className="grid g2">
-              <Field label="姓名"><input value={form.name} onChange={set('name')} placeholder="必填" /></Field>
+              <Field label={adding === 'upload' ? '姓名（可选，留空自动提取）' : '姓名'}><input value={form.name} onChange={set('name')} placeholder={adding === 'upload' ? '自动提取后可修改' : '必填'} /></Field>
               <Field label="来源渠道">
-                <select value={form.source_channel} onChange={set('source_channel')}>
-                  {['内推', 'BOSS直聘', '猎聘', '猎头', '校园招聘', '官网', '其他'].map(c => <option key={c}>{c}</option>)}
+                <select value={sourceValue(form)} onChange={e => setForm({ ...form, ...sourcePatch(e.target.value, channels) })}>
+                  <optgroup label="已建招聘渠道">
+                    {channels.map(channel => <option key={channel.id} value={`channel:${channel.id}`}>{channel.type === 'headhunter' ? '猎头 · ' : ''}{channel.name}</option>)}
+                  </optgroup>
+                  <optgroup label="未建渠道的来源">
+                    {LEGACY_SOURCES.map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
+                  </optgroup>
                 </select>
               </Field>
               <Field label="应聘需求">
                 <select value={form.requisition_id || ''} onChange={e => setForm({ ...form, requisition_id: e.target.value ? +e.target.value : null })}>
                   <option value="">— 未关联 —</option>
-                  {reqs.filter(r => r.status !== 'closed' && r.status !== 'cancelled').map(r => <option key={r.id} value={r.id}>{r.title}（{r.grade}·{r.city}）</option>)}
+                  {reqs.filter(r => r.status !== 'closed' && r.status !== 'cancelled').map(r => <option key={r.id} value={r.id}>{r.title}（{r.job_family}·{r.city}）</option>)}
                 </select>
               </Field>
-              <Field label="期望月薪（元）"><input type="number" value={form.expected_salary} onChange={set('expected_salary')} /></Field>
+              <Field label="期望月薪"><select value={form.expected_salary_range} onChange={set('expected_salary_range')}>
+                {EXPECTED_SALARY_RANGES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+              </select></Field>
               <Field label="电话"><input value={form.phone} onChange={set('phone')} /></Field>
               <Field label="邮箱"><input value={form.email} onChange={set('email')} /></Field>
             </div>
             <div className="row">
-              <Btn onClick={() => setAdding(false)}>取消</Btn>
-              <Btn primary onClick={saveNew}>添加</Btn>
+              <Btn onClick={() => setAdding('choice')}>返回</Btn>
+              <Btn primary disabled={creating} onClick={saveNew}>{creating ? '正在建档…' : '保存建档'}</Btn>
             </div>
+            </>}
           </div>
         </Modal>
       )}
 
       {detail && (
-        <Modal onClose={() => setDetail(null)}>
+        <Modal onClose={() => goto('candidates')}>
           <div className="modal" style={{ width: 640, maxHeight: '86vh', overflowY: 'auto' }}>
-            <h3>{detail.name} <Chip kind="gray" style={{}}>{stageLabel(detail.stage)}</Chip></h3>
+            <h3>{detail.name} <Chip kind="gray">{candidateStatusLabel(detail)}</Chip></h3>
             <div className="grid g2" style={{ fontSize: 13 }}>
               <div><span className="hint">应聘需求</span><br />{detail.requisition_title || '—'}</div>
-              <div><span className="hint">来源</span><br />{detail.source_channel}</div>
+              <div><span className="hint">来源渠道</span><br />
+                <select value={sourceValue(detail)} onChange={e => changeDetailSource(e.target.value)} style={{ marginTop: 3 }}>
+                  <optgroup label="已建招聘渠道">
+                    {channels.map(channel => <option key={channel.id} value={`channel:${channel.id}`}>{channel.type === 'headhunter' ? '猎头 · ' : ''}{channel.name}</option>)}
+                  </optgroup>
+                  <optgroup label="未建渠道的来源">
+                    {[...new Set([...LEGACY_SOURCES, detail.source_channel])].map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
+                  </optgroup>
+                </select>
+              </div>
               <div><span className="hint">申请日期</span><br />{detail.apply_date}</div>
-              <div><span className="hint">期望月薪</span><br />{fmtMoney(detail.expected_salary)}</div>
+              <div><span className="hint">期望月薪</span><br />{expectedSalaryLabel(detail)}</div>
               <div><span className="hint">Offer 月薪</span><br /><b style={{ color: '#d97706' }}>{fmtMoney(detail.offer_amount)}</b></div>
               <div><span className="hint">评分</span><br />{detail.eval_score ?? '—'}</div>
               <div><span className="hint">需求预算</span><br />{detailReq?.salary_min || detailReq?.salary_max ? `${fmtMoney(detailReq.salary_min)} – ${fmtMoney(detailReq.salary_max)}/月` : '—'}</div>
-              <div><span className="hint">需求口径</span><br />{detailReq ? `${detailReq.job_family || '—'} · ${detailReq.grade || '—'} · ${detailReq.city || '—'}` : '—'}</div>
+              <div><span className="hint">需求口径</span><br />{detailReq ? `${detailReq.job_family || '—'} · ${detailReq.city || '—'}` : '—'}</div>
             </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+              <Btn sm onClick={() => setProfileForm({ personal_profile: detail.personal_profile, expected_salary_range: expectedSalaryRange(detail), requisition_id: detail.requisition_id || '' })}>编辑个人信息</Btn>
+              {['new', 'rejected', 'withdrawn'].includes(detail.stage) && <Btn sm onClick={() => changeStage('screening')}>进入初筛</Btn>}
+              {detail.stage === 'interview' && <Btn sm onClick={() => changeStage('offer')}>进入 Offer 阶段</Btn>}
+              {!['hired', 'rejected', 'withdrawn', 'accepted'].includes(detail.stage) && <Btn sm onClick={() => changeStage('rejected')}>淘汰人选</Btn>}
+              {!['hired', 'withdrawn', 'rejected'].includes(detail.stage) && <Btn sm onClick={() => changeStage('withdrawn')}>人选放弃</Btn>}
+            </div>
+            <ResumeProfileDetails value={detail.personal_profile} />
+            <details style={{ marginTop: 14 }} open>
+              <summary style={{ cursor: 'pointer', fontWeight: 600 }}>流转记录（{detail.timeline?.length || 0} 条）</summary>
+              <div style={{ maxHeight: 220, overflowY: 'auto', borderLeft: '2px solid var(--line)', marginTop: 8, paddingLeft: 12 }}>
+                {[...(detail.timeline || [])].reverse().map(event => <div key={event.id} style={{ padding: '7px 0', fontSize: 12, borderBottom: '1px solid var(--line)' }}>
+                  <b>{event.from_stage ? `${stageLabel(event.from_stage)} → ` : ''}{event.to_stage ? stageLabel(event.to_stage) : event.note || '记录更新'}{event.round_no ? ` · 第 ${event.round_no} 轮` : ''}</b>
+                  {event.to_stage && event.note && <div>{event.note}</div>}
+                  <div className="hint">{new Date(event.occurred_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })} · {event.actor}</div>
+                </div>)}
+                {!detail.timeline?.length && <Hint>暂无流转记录。</Hint>}
+              </div>
+            </details>
+            {detail?.linked_channel_type === 'headhunter' && (
+              <div style={{ marginTop: 10, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: 10, fontSize: 13 }}>
+                <b>猎头关联：{detail.linked_channel_name}</b>
+                <div className="hint" style={{ marginTop: 3 }}>
+                  计费依据 {detail.fee_basis_months || '—'} 个月月薪 × {detail.fee_rate ?? '—'}%
+                  {detailFeeEstimate != null ? `；按${detail.offer_amount ? 'Offer' : '期望'}月薪预计费用 ${fmtMoney(detailFeeEstimate)}` : '；费用条件尚未完整'}
+                  {detail.guarantee_months != null ? `；保证期 ${detail.guarantee_months} 个月` : ''}
+                </div>
+              </div>
+            )}
             {detail.reject_reason && <div className="hint" style={{ marginTop: 8, color: '#dc2626' }}>淘汰原因：{detail.reject_reason}</div>}
 
             {/* Offer 参考：只展示已审批的原始基准，不做无来源系数外推 */}
@@ -274,50 +382,63 @@ export default function Candidates({ toast, backendUp, goto }) {
             {/* 简历与 AI 解析：线索即结构化 */}
             <div style={{ marginTop: 12, background: '#f8fafc', border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 13 }}>📄 简历与 AI 解析</b>
+                <b style={{ fontSize: 13 }}>📄 简历与解析</b>
                 {detail.resume_name && <Chip kind="ok">{detail.resume_name}</Chip>}
                 {detail.job_family && <Chip kind="info">🏷 {detail.job_family}</Chip>}
                 {detail.experience_years != null && <Chip kind="info">{detail.experience_years} 年经验</Chip>}
                 <div style={{ flex: 1 }} />
-                <input ref={resumeRef} type="file" accept=".txt,.md,.text,.docx,.pdf" style={{ display: 'none' }} onChange={onResumePick} />
+                <input ref={resumeRef} type="file" accept=".txt,.md,.text,.docx,.pdf,.xlsx,.xls" style={{ display: 'none' }} onChange={onResumePick} />
                 <Btn sm onClick={() => resumeRef.current?.click()}>上传</Btn>
-                {detail.resume_name && <Btn sm disabled={resumeParsing} onClick={doParseResume}>{resumeParsing ? '解析中…' : '🤖 AI 解析'}</Btn>}
+                {detail.resume_name && <Btn sm disabled={resumeParsing} onClick={() => setParseDialog(true)}>{resumeParsing ? '解析中…' : '选择解析方式'}</Btn>}
+                {readResumeResult(detail.resume_parsed) && <Btn sm onClick={() => setResumePreview(readResumeResult(detail.resume_parsed))}>查看提取结果</Btn>}
                 {detail.resume_name && <Btn sm onClick={() => downloadCandidateResume(detail.id, detail.resume_name).catch(() => toast('下载失败'))}>下载</Btn>}
                 {detail.resume_name && <Btn sm onClick={doDeleteResume}>删除</Btn>}
               </div>
+              <ResumeParsingStatus />
+              {detail.resume_pending && <div style={{ marginTop: 8, color: '#92400e' }}>简历已解析，尚未更新个人信息。请打开提取结果，核对后点击「确认更新个人信息与岗位」。</div>}
+              {readResumeResult(detail.resume_parsed) && <Hint>最近一次结果：{resumeEngineInfo(readResumeResult(detail.resume_parsed)?.engine).label}</Hint>}
               {detail.skills && (
                 <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {detail.skills.split(',').filter(Boolean).map(s => <span key={s} className="chip gray" style={{}}>{s.trim()}</span>)}
                 </div>
               )}
-              {!detail.resume_name && <div className="hint" style={{ marginTop: 6 }}>上传简历后 AI 自动提取：基本信息 / 教育 / 工作经历 / 技能标签 / 岗位族 / 经验年数</div>}
+              {!detail.resume_name && <div className="hint" style={{ marginTop: 6 }}>支持 txt/md/docx/pdf/xlsx/xls，≤10MB。上传后可选择基础提取，也可直接手动补充资料。</div>}
             </div>
 
             {/* 面试记录 */}
-            <h4 style={{ marginTop: 14 }}>面试记录（{(detail.interviews || []).length} 轮）</h4>
+            <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h4>面试记录（{(detail.interviews || []).length} 轮）</h4>
+              <Btn sm onClick={() => goto('interviews', detail.id)}>查看 / 编辑全部面评 →</Btn>
+            </div>
             {(detail.interviews || []).map(iv => (
               <div key={iv.id} style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, margin: '6px 0', fontSize: 13 }}>
                 <b>R{iv.round_no}</b> · {iv.interviewer} · {iv.interview_date}
-                <Chip kind={iv.result === 'pass' ? 'ok' : iv.result === 'fail' ? 'warn' : 'gray'} style={{ marginLeft: 6 }}>{iv.result === 'pass' ? '通过' : iv.result === 'fail' ? '不通过' : '待定'}</Chip>
-                {iv.score != null && <Chip kind="info" style={{ marginLeft: 6 }}>评分 {iv.score}</Chip>}
+                <Chip kind={iv.status === 'completed' ? interviewRating(iv.result).kind : 'info'}>{iv.status === 'completed' ? interviewRating(iv.result).label : INTERVIEW_STATUS_LABELS[iv.status]}</Chip>
                 {iv.notes && <div className="hint">{iv.notes}</div>}
+                {iv.status === 'scheduled' && <Btn sm onClick={async () => {
+                  try { await updateInterview(iv.id, { status: 'in_progress' }); await load(); toast('已开始本轮面试') } catch (error) { toast(error.message) }
+                }}>开始本轮面试</Btn>}
               </div>
             ))}
-            {detail.stage === 'interview' && (
+            {!['accepted', 'hired', 'rejected', 'withdrawn'].includes(detail.stage) && (
               <div style={{ border: '1px dashed var(--line)', borderRadius: 8, padding: 10, marginTop: 8 }}>
+                <h4 style={{ marginBottom: 8 }}>安排面试 / 补录面评</h4>
                 <div className="grid g2">
                   <Field label="轮次"><input type="number" value={ivForm.round_no} onChange={e => setIvForm({ ...ivForm, round_no: +e.target.value })} /></Field>
                   <Field label="面试官"><input value={ivForm.interviewer} onChange={e => setIvForm({ ...ivForm, interviewer: e.target.value })} /></Field>
-                  <Field label="结果">
+                  <Field label="面试日期"><input type="date" value={ivForm.interview_date} onChange={e => setIvForm({ ...ivForm, interview_date: e.target.value })} /></Field>
+                  <Field label="面试状态"><select value={ivForm.status} onChange={e => setIvForm({ ...ivForm, status: e.target.value })}>
+                    <option value="scheduled">待面试（安排日期）</option><option value="in_progress">本轮面试中</option><option value="completed">已完成（补录面评）</option>
+                  </select></Field>
+                  {ivForm.status === 'completed' && <Field label="评分">
                     <select value={ivForm.result} onChange={e => setIvForm({ ...ivForm, result: e.target.value })}>
-                      <option value="pending">待定</option><option value="pass">通过</option><option value="fail">不通过</option>
+                      {INTERVIEW_RATINGS.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
                     </select>
-                  </Field>
-                  <Field label="评分（0-100）"><input type="number" value={ivForm.score} onChange={e => setIvForm({ ...ivForm, score: e.target.value })} /></Field>
+                  </Field>}
                 </div>
-                <Field label="评价"><input value={ivForm.notes} onChange={e => setIvForm({ ...ivForm, notes: e.target.value })} /></Field>
+                <Field label="面评"><textarea rows={6} value={ivForm.notes} onChange={e => setIvForm({ ...ivForm, notes: e.target.value })} placeholder="记录能力表现、优势、风险点和录用建议" /></Field>
                 <div className="row">
-                  <Btn sm onClick={addInterview}>+ 记录本轮面试</Btn>
+                  <Btn sm onClick={addInterview}>{ivForm.status === 'scheduled' ? '+ 保存面试安排' : '+ 记录本轮面试'}</Btn>
                 </div>
               </div>
             )}
@@ -326,36 +447,85 @@ export default function Candidates({ toast, backendUp, goto }) {
               {detail.stage === 'offer' && (
                 <>
                   {detail.offer_status === 'approved'
-                    ? <Chip kind="ok">✅ Offer 已批准（可办理入职）</Chip>
+                    ? <Chip kind="ok">✅ Offer 已批准（可确认录用）</Chip>
                     : detail.offer_status === 'rejected'
                       ? <Chip kind="bad">Offer 已驳回</Chip>
                       : <Btn onClick={doOfferApproval}>📋 发起 Offer 审批</Btn>}
-                  {detail.offer_status === 'approved' && <Btn primary style={{ background: '#10b981', borderColor: '#10b981' }} onClick={doOnboard}>🚀 办理入职（生成员工档案）</Btn>}
+                  {detail.offer_status === 'approved' && <Btn primary onClick={() => changeStage('accepted')}>确认录用</Btn>}
                 </>
               )}
-              {detail.stage === 'hired' && <Btn primary onClick={() => goto('employees')}>已入职 · 查看员工档案 →</Btn>}
+              {detail.stage === 'accepted' && <>
+                <Btn primary onClick={doOnboard}>关联建立员工档案</Btn>
+                <Hint>也可到“员工档案 → 新增员工”选择本位已录用人选。</Hint>
+              </>}
+              {detail.stage === 'hired' && detail.employee_id && <Btn primary onClick={() => goto('employee-profile', detail.employee_id)}>查看关联员工档案 →</Btn>}
               {detail.stage !== 'hired' && detail.stage !== 'rejected' && detail.stage !== 'withdrawn' && (
                 <>
                   <Btn onClick={saveOffer}>💼 更新 Offer</Btn>
-                  {detail.stage !== 'offer' && <Btn primary onClick={async () => { await setCandidateStage(detail.id, { stage: 'offer' }); toast('已进入 Offer 阶段'); load(); openDetail({ ...detail, stage: 'offer' }) }}>发 Offer</Btn>}
                 </>
               )}
-              <Btn onClick={() => setDetail(null)}>关闭</Btn>
+              <Btn onClick={() => goto('candidates')}>关闭</Btn>
             </div>
           </div>
         </Modal>
       )}
 
+      {profileForm && detail && <Modal onClose={profileSaving ? undefined : () => setProfileForm(null)}>
+        <div className="modal" style={{ width: 720, maxHeight: '86vh', overflowY: 'auto' }}>
+          <h3>{profileForm.fromResume ? '核对并更新个人信息' : '编辑个人信息'}</h3>
+          {profileForm.fromResume && <Hint>下列资料优先采用本次识别结果，可直接修改。确认后更新姓名、联系方式、学历、技能及全部经历；未识别到的信息保留原值。</Hint>}
+          <RequisitionMatcher candidateId={detail.id} profile={profileForm.personal_profile} selectedId={profileForm.requisition_id}
+            auto={profileForm.fromResume && !detail.requisition_id} disabled={profileSaving} onBusyChange={setProfileMatching}
+            onSelect={value => setProfileForm(current => ({ ...current, requisition_id: value, requisitionTouched: true }))}
+            onReady={value => setProfileForm(current => current && !current.requisition_id && !current.requisitionTouched && value.suggested_requisition_id
+              ? { ...current, requisition_id: String(value.suggested_requisition_id) } : current)} />
+          <Field label="关联岗位（招聘需求）"><select value={profileForm.requisition_id || ''} disabled={profileSaving}
+            onChange={event => setProfileForm({ ...profileForm, requisition_id: event.target.value, requisitionTouched: true })}>
+            <option value="">— 暂不关联 —</option>{reqs.filter(item => ['open', 'interview'].includes(item.status) || item.id === Number(profileForm.requisition_id))
+              .map(item => <option key={item.id} value={item.id}>{item.title} · {item.city}{['open', 'interview'].includes(item.status) ? '' : '（当前关联，已非在招）'}</option>)}
+          </select></Field>
+          {detail.requisition_id && <Hint>已保留当前关联岗位；如需调整，可选择其他岗位并确认保存。</Hint>}
+          <ResumeProfileEditor value={profileForm.personal_profile} onChange={value => setProfileForm({ ...profileForm, personal_profile: value })} />
+          {!profileForm.fromResume && <>
+          <div className="grid g2">
+            <Field label="期望月薪"><select value={profileForm.expected_salary_range} onChange={e => setProfileForm({ ...profileForm, expected_salary_range: e.target.value })}>
+              {EXPECTED_SALARY_RANGES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </select></Field>
+          </div>
+          </>}
+          {profileForm.error && <p role="alert" style={{ color: '#b42318' }}>{profileForm.error}</p>}
+          <div className="row resume-review-actions"><Btn disabled={profileSaving} onClick={() => setProfileForm(null)}>取消</Btn><Btn primary disabled={profileSaving || profileMatching} onClick={async () => {
+            if (profileSaving || profileMatching) return
+            setProfileSaving(true)
+            try {
+              if (profileForm.fromResume) await applyCandidateResume(detail.id, { personal_profile: profileForm.personal_profile, result_token: profileForm.result_token,
+                requisition_id: profileForm.requisition_id ? Number(profileForm.requisition_id) : null })
+              else {
+                const basic = profileForm.personal_profile.basic
+                await updateCandidate(detail.id, { ...profileForm, name: basic.name, phone: basic.mobile, email: basic.personal_email,
+                  requisition_id: profileForm.requisition_id ? Number(profileForm.requisition_id) : null })
+              }
+              setProfileForm(null); await load(); toast('个人信息、经历和关联岗位已保存')
+            } catch (error) { setProfileForm(current => ({ ...current, error: error.message })) }
+            finally { setProfileSaving(false) }
+          }}>{profileSaving ? '正在保存…' : profileMatching ? '岗位匹配中…' : profileForm.fromResume ? '确认更新个人信息与岗位' : '保存个人信息与岗位'}</Btn></div>
+        </div>
+      </Modal>}
+
+      {parseDialog && detail && <ResumeParsingDialog filename={detail.resume_name} busy={resumeParsing}
+        onClose={() => setParseDialog(false)} onBasicParse={() => doParseResume('rules')} onModelParse={() => doParseResume('local_model')} />}
+
       {/* 简历解析结果预览 */}
       {resumePreview && (
         <Modal onClose={() => setResumePreview(null)}>
           <div className="modal" style={{ width: 620, maxHeight: '86vh', overflowY: 'auto' }}>
-            <h3>🤖 AI 解析结果 · {detail?.name}</h3>
-            {resumePreview.engine && <Hint>解析引擎：{resumePreview.engine}{resumePreview.job_family ? ` · 岗位族「${resumePreview.job_family}」` : ''}{resumePreview.experience_years != null ? ` · ${resumePreview.experience_years} 年经验` : ''}</Hint>}
+            <h3>提取结果核对 · {detail?.name}</h3>
+            <Hint>识别结果尚不会自动覆盖个人资料。核对后点击下方按钮，进入确认更新。</Hint>
+            <ResumeResultSummary parsed={resumePreview} />
             <div className="nav-sep" style={{ padding: '10px 0 4px' }}>基本信息</div>
             <div className="grid g2" style={{ fontSize: 13 }}>
               {Object.entries(resumePreview.basic || {}).filter(([, v]) => v).map(([k, v]) => (
-                <div key={k}><span className="hint">{k}</span><br /><b>{String(v)}</b></div>
+                <div key={k}><span className="hint">{RESUME_FIELD_LABELS[k] || k}</span><br /><b>{Array.isArray(v) ? v.join('、') : String(v)}</b></div>
               ))}
             </div>
             <div className="nav-sep" style={{ padding: '10px 0 4px' }}>教育经历（{(resumePreview.education || []).length}）</div>
@@ -369,11 +539,17 @@ export default function Candidates({ toast, backendUp, goto }) {
             {(resumePreview.work_experience || []).map((x, i) => (
               <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, margin: '5px 0', fontSize: 13 }}>
                 <b>{x.company}</b>{x.title ? ' · ' + x.title : ''}
-                <span className="hint">{x.start_date ? ' · ' + x.start_date + ' ~ ' + (x.end_date || '至今') : ''}{x.note ? ' · ' + String(x.note).slice(0, 40) : ''}</span>
+                <span className="hint">{x.start_date ? ' · ' + x.start_date + ' ~ ' + (x.end_date || '至今') : ''}</span>
+                {x.note && <div className="hint" style={{ whiteSpace: 'pre-wrap', marginTop: 5 }}>{x.note}</div>}
               </div>
             ))}
-            <div className="row">
+            <div className="row resume-review-actions">
               <Btn onClick={() => setResumePreview(null)}>关闭</Btn>
+              {detail && <Btn primary onClick={() => {
+                setProfileForm({ personal_profile: mergeResumeProfile(detail.personal_profile, resumePreview), fromResume: true,
+                  result_token: resumePreview.result_token || detail.resume_result_token, requisition_id: detail.requisition_id || '' })
+                setResumePreview(null)
+              }}>核对并更新个人信息</Btn>}
             </div>
           </div>
         </Modal>

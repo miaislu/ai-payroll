@@ -3,7 +3,8 @@ import { currentPeriod, isPeriod } from './periods.js'
 
 const TERM_FIELDS = [
   'grade', 'job_family', 'category', 'monthly_base', 'perf_ratio', 'city', 'department_id', 'employment_type',
-  'supplemental_fund_rate', 'special_deduction', 'annual_option_value'
+  'supplemental_fund_rate', 'special_deduction', 'special_deductions_json', 'annual_option_value',
+  'fixed_salary_months', 'annual_bonus_months'
 ]
 
 export function employeesForPeriod(period) {
@@ -40,22 +41,29 @@ export function upsertCompensationTerm(employee, effectiveMonth = currentPeriod(
     employment_type: employee.employment_type || 'employee',
     supplemental_fund_rate: Number(employee.supplemental_fund_rate) || 0,
     special_deduction: Math.round(Number(employee.special_deduction) || 0),
-    annual_option_value: Math.round(Number(employee.annual_option_value) || 0)
+    special_deductions_json: String(employee.special_deductions_json || '{}'),
+    annual_option_value: Math.round(Number(employee.annual_option_value) || 0),
+    fixed_salary_months: Number(employee.fixed_salary_months ?? 12),
+    annual_bonus_months: Number(employee.annual_bonus_months ?? 0)
   }
   db.prepare(`INSERT INTO employee_compensation_terms(
       employee_id,effective_month,monthly_base,perf_ratio,city,department_id,employment_type,
-      supplemental_fund_rate,special_deduction,annual_option_value,source_approval_id,created_by,created_at
+      supplemental_fund_rate,special_deduction,special_deductions_json,annual_option_value,
+      fixed_salary_months,annual_bonus_months,source_approval_id,created_by,created_at
       ,grade,job_family,category
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(employee_id,effective_month) DO UPDATE SET
       monthly_base=excluded.monthly_base,perf_ratio=excluded.perf_ratio,city=excluded.city,
       department_id=excluded.department_id,employment_type=excluded.employment_type,
       supplemental_fund_rate=excluded.supplemental_fund_rate,special_deduction=excluded.special_deduction,
-      annual_option_value=excluded.annual_option_value,source_approval_id=excluded.source_approval_id,
+      special_deductions_json=excluded.special_deductions_json,annual_option_value=excluded.annual_option_value,
+      fixed_salary_months=excluded.fixed_salary_months,annual_bonus_months=excluded.annual_bonus_months,
+      source_approval_id=excluded.source_approval_id,
       created_by=excluded.created_by,created_at=excluded.created_at,
       grade=excluded.grade,job_family=excluded.job_family,category=excluded.category`)
     .run(employee.id, effectiveMonth, values.monthly_base, values.perf_ratio, values.city, values.department_id,
-      values.employment_type, values.supplemental_fund_rate, values.special_deduction, values.annual_option_value,
+      values.employment_type, values.supplemental_fund_rate, values.special_deduction, values.special_deductions_json,
+      values.annual_option_value, values.fixed_salary_months, values.annual_bonus_months,
       sourceApprovalId, actor, new Date().toISOString(), values.grade, values.job_family, values.category)
   return { employee_id: employee.id, effective_month: effectiveMonth, ...values }
 }

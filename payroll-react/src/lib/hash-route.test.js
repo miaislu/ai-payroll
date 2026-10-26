@@ -15,6 +15,16 @@ test('toHash 与 parseHash 往返', () => {
   assert.deepEqual(parseHash(toHash('copilot')), { page: 'copilot', empId: null })
 })
 
+test('面试记录和候选人详情保留同一人选编号的深链', () => {
+  for (const page of ['candidates', 'interviews']) {
+    assert.equal(toHash(page, 9), `#/${page}/9`)
+    assert.deepEqual(parseHash(toHash(page, 9)), { page, empId: null, candidateId: 9 })
+    assert.deepEqual(resolvePage('hr', page, 9), { page, empId: null, candidateId: 9 })
+    assert.equal(parseHash(`#/${page}/-2`).candidateId, null)
+  }
+  assert.deepEqual(resolvePage('emp', 'interviews', 9), { page: 'dashboard', empId: null })
+})
+
 test('resolvePage 按角色收敛', () => {
   assert.deepEqual(resolvePage('emp', 'payroll'), { page: 'dashboard', empId: null })
   assert.deepEqual(resolvePage('emp', 'attendance'), { page: 'attendance', empId: null })

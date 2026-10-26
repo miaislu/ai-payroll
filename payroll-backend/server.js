@@ -1,6 +1,9 @@
-// 小公司人力管理系统 · 后端 API（Express + SQLite）
+// HR 管理系统 · 后端 API（Express + SQLite）
 import express from 'express'
 import cors from 'cors'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import { seedIfEmpty } from './seed.js'
 import { org } from './routes/org.js'
 import { recruiting } from './routes/recruiting.js'
@@ -19,7 +22,9 @@ import { copilot } from './routes/copilot.js'
 import { option } from './routes/option.js'
 import { people } from './routes/people.js'
 import { market } from './routes/market.js'
+import { ResumeModelError } from './lib/local_resume_model.js'
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 seedIfEmpty()
 const app = express()
 app.disable('x-powered-by')
@@ -71,12 +76,31 @@ app.use('/api/equity', auth(OPS_ROLES), equity)
 app.use('/api/employees', auth(HR_ROLES), employee)
 app.use('/api/expense', auth(), expense)
 
+// 单机版可由同一个仅监听 127.0.0.1 的进程提供前端，避免长期运行 Vite 开发服务器。
+// API 404 必须先返回 JSON，不能被 SPA 的 index.html 吞掉。
+app.use('/api', (req, res) => res.status(404).json({ error: '接口不存在' }))
+const frontendDist = path.resolve(process.env.FRONTEND_DIST || path.join(__dirname, '..', 'payroll-react', 'dist'))
+const frontendIndex = path.join(frontendDist, 'index.html')
+if (process.env.SERVE_FRONTEND === 'true') {
+  if (!existsSync(frontendIndex)) throw new Error(`前端构建产物不存在：${frontendIndex}`)
+  app.use(express.static(frontendDist, {
+    index: false,
+    dotfiles: 'deny',
+    maxAge: '7d',
+    immutable: true
+  }))
+  app.get(/^(?!\/api(?:\/|$)).*/, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    res.sendFile(frontendIndex)
+  })
+}
+
 app.use((err, req, res, next) => {
   console.error('[server error]', err?.message || err)
   if (res.headersSent) return next(err)
   const status = err?.statusCode || (err?.name === 'MulterError' ? 400 : 500)
   res.setHeader('Content-Type', 'application/json')
-  res.status(status).json({ error: status < 500 ? err.message : '服务器内部错误' })
+  res.status(status).json({ error: status < 500 || err instanceof ResumeModelError ? err.message : '服务器内部错误' })
 })
 process.on('unhandledRejection', reason => {
   console.error('[unhandledRejection]', reason?.message || reason)

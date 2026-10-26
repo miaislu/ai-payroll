@@ -1,4 +1,4 @@
-# 小公司人力管理系统 · 火山云海外服务器部署指南
+# HR 管理系统 · 火山云海外服务器部署指南
 
 > 适用：火山云（Volcano Engine）海外地域服务器（如新加坡/美西等 Linux 实例）
 > 前置：已将项目代码上传到服务器（`scp -r payroll-backend payroll-react /opt/payroll/` 或 git clone），已开通 80/443 端口安全组
@@ -31,6 +31,7 @@ DOMAIN=payroll.example.com \
 INITIAL_ADMIN_PASSWORD='替换为至少12位随机密码' \
 TLS_CERT_PATH=/etc/letsencrypt/live/payroll.example.com/fullchain.pem \
 TLS_KEY_PATH=/etc/letsencrypt/live/payroll.example.com/privkey.pem \
+BACKUP_RETENTION_DAYS=30 \
 bash payroll-backend/deploy/deploy.sh
 ```
 
@@ -65,13 +66,16 @@ bash payroll-backend/deploy/deploy.sh
 | 初始账号 | 设置 `NODE_ENV=production` 与 `INITIAL_ADMIN_PASSWORD`（≥12 位）；不要设置 `DEMO_MODE=true` |
 | 安全组 | 火山云控制台仅放行 80/443/22（22 建议限定 IP） |
 | HTTPS | certbot 自动证书；HTTP 强制跳转 |
-| 限流 | 登录接口加 `express-rate-limit`（防止爆破） |
-| 数据备份 | `sqlite3 /var/lib/payroll/payroll.db ".backup ..."` 每日 cron，并备份 `/var/lib/payroll/uploads` |
+| 限流 | 应用已有 IP+账号失败限速；公网部署再配置云 WAF/网关限流 |
+| 数据备份 | 脚本会启用 `payroll-backup.timer`，每日备份 SQLite、附件和政策文件；正式使用还应配置 `BACKUP_RCLONE_REMOTE` 异地备份 |
 
 ## 四、验证清单
 
 ```bash
 curl http://127.0.0.1:3001/api/health          # 后端存活
+systemctl list-timers payroll-backup.timer     # 确认每日备份已排期
+systemctl start payroll-backup.service         # 手动备份演练
+ls -l /var/backups/payroll/                    # 应有 tar.gz 和 sha256
 curl -X POST http://<域名>/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"<管理员用户名>","password":"<INITIAL_ADMIN_PASSWORD>"}'     # 登录

@@ -1,22 +1,20 @@
 // 表单校验白名单（CRUD 用）
-import { DIRECTIONS } from './data-shim.js'
 import { isDate, isPeriod } from './periods.js'
+import { JOB_CATALOG, JOB_FAMILIES, categoryOfJob } from './job_catalog.js'
+import { normalizeSpecialDeductions } from './special_deductions.js'
 
-// 员工可选岗位（技术岗 = 对标库方向；职能/管理岗为独立清单）
-export const DIRECTIONS_KEYS = Object.keys(DIRECTIONS)
-export const SUPPORT_FAMILIES = ['财务', '人力资源', '行政', '市场', '法务', '采购', '质量体系']
-export const MGMT_FAMILIES = ['工程管理', '研发管理', '职能管理']
-export const JOB_FAMILIES = [...DIRECTIONS_KEYS, ...SUPPORT_FAMILIES, ...MGMT_FAMILIES]
+// 员工可选岗位统一来自三大类岗位目录。
+export const DIRECTIONS_KEYS = JOB_CATALOG.tech.jobs
+export const SUPPORT_FAMILIES = JOB_CATALOG.support.jobs
+export const MGMT_FAMILIES = JOB_CATALOG.mgmt.jobs
+export { JOB_FAMILIES }
 export const CATEGORIES = ['tech', 'support', 'mgmt']
 export const CATEGORY_LABELS = { tech: '技术', support: '职能', mgmt: '管理' }
 export const CITY_KEYS = ['上海', '北京', '深圳', '苏州', '无锡', '合肥', '武汉', '成都', '西安', '杭州', '南京', '广州', '厦门']
 export const GRADES = ['P4', 'P5', 'P6', 'P7', 'M1', 'M2']
 
 export function categoryOf(jobFamily) {
-  if (DIRECTIONS_KEYS.includes(jobFamily)) return 'tech'
-  if (SUPPORT_FAMILIES.includes(jobFamily)) return 'support'
-  if (MGMT_FAMILIES.includes(jobFamily)) return 'mgmt'
-  return 'tech'
+  return categoryOfJob(jobFamily) || 'tech'
 }
 
 export function validateEmployee(body) {
@@ -33,10 +31,17 @@ export function validateEmployee(body) {
   if (!CITY_KEYS.includes(e.city)) errors.push('城市不在支持列表')
   e.monthly_base = Math.round(Number(body.monthly_base))
   if (!Number.isFinite(e.monthly_base) || e.monthly_base < 2000 || e.monthly_base > 500000) errors.push('月薪须在 2000-500000 之间')
+  e.fixed_salary_months = Number(body.fixed_salary_months ?? 12)
+  if (!Number.isFinite(e.fixed_salary_months) || e.fixed_salary_months < 1 || e.fixed_salary_months > 24) errors.push('全年固定薪资月数须在 1-24 之间')
+  e.annual_bonus_months = Number(body.annual_bonus_months ?? 0)
+  if (!Number.isFinite(e.annual_bonus_months) || e.annual_bonus_months < 0 || e.annual_bonus_months > 24) errors.push('年终奖约定月数须在 0-24 之间')
   e.perf_ratio = Number(body.perf_ratio)
   if (!Number.isFinite(e.perf_ratio) || e.perf_ratio < 0 || e.perf_ratio > 1) errors.push('绩效比例须在 0-1 之间')
-  e.special_deduction = Math.round(Number(body.special_deduction) || 0)
-  if (e.special_deduction < 0 || e.special_deduction > 10000) errors.push('专项附加扣除须在 0-10000 之间')
+  const deductions = normalizeSpecialDeductions(body.special_deductions ?? body.special_deductions_json, e.city, body.special_deduction)
+  errors.push(...deductions.errors)
+  e.special_deductions = deductions.items
+  e.special_deductions_json = JSON.stringify(deductions.items)
+  e.special_deduction = deductions.monthly
   const hireDate = String(body.hire_date || (isPeriod(body.hire_month) ? `${body.hire_month}-01` : ''))
   if (!isDate(hireDate)) errors.push('入职日期必填且须为有效的 YYYY-MM-DD')
   e.hire_date = isDate(hireDate) ? hireDate : null

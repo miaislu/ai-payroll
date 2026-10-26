@@ -70,7 +70,7 @@ export default function Equity({ toast, backendUp }) {
           {grants?.map(g => (
             <tr key={g.id}>
               <td><b>{g.employee_name}</b></td>
-              <td>{g.grade} {g.job_family}</td>
+              <td>{g.job_family}</td>
               <td>{g.grant_date}</td>
               <td>{g.share_count}</td>
               <td>¥{g.exercise_price}</td>
@@ -133,7 +133,7 @@ export default function Equity({ toast, backendUp }) {
               <Field label="员工">
                 <select value={form.employee_id || ''} onChange={set('employee_id')}>
                   <option value="">— 选择员工 —</option>
-                  {emps.map(e => <option key={e.id} value={e.id}>{e.name}（{e.grade}·{e.job_family}）</option>)}
+                  {emps.map(e => <option key={e.id} value={e.id}>{e.name}（{e.job_family}）</option>)}
                 </select>
               </Field>
               <Field label="授予日期"><input type="date" value={form.grant_date || ''} onChange={set('grant_date')} /></Field>

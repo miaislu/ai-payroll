@@ -65,7 +65,7 @@ export default function Performance({ toast, backendUp, user, goto }) {
           <tbody>
             {rows.map(r => (
               <tr key={r.id}>
-                <td><b>{r.name}</b><div className="hint">{r.grade} · {r.job_family}{r.flag ? ` · ${r.flag}` : ''}</div></td>
+                <td><b>{r.name}</b><div className="hint">{r.job_family}{r.flag ? ` · ${r.flag}` : ''}</div></td>
                 <td><Chip kind={r.rating === 'S' ? 'ok' : r.rating === 'D' ? 'bad' : 'info'}>{r.rating}</Chip></td>
                 <td>{r.score ?? '—'}</td>
                 <td>{r.suggest?.pct ? `+${Math.round(r.suggest.pct * 100)}% → ¥${r.suggest.to_monthly?.toLocaleString('zh-CN')}/月` : '不调薪'}</td>
@@ -90,7 +90,7 @@ export default function Performance({ toast, backendUp, user, goto }) {
               <Field label="员工">
                 <select value={form.employee_id} onChange={e => setForm({ ...form, employee_id: e.target.value })}>
                   <option value="">选择</option>
-                  {emps.filter(e => e.status === 'active').map(e => <option key={e.id} value={e.id}>{e.name} · {e.grade}</option>)}
+                  {emps.filter(e => e.status === 'active').map(e => <option key={e.id} value={e.id}>{e.name} · {e.job_family}</option>)}
                 </select>
               </Field>
               <Field label="评级">

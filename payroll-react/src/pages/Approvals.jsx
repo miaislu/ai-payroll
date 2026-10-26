@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Card, Chip, Hint, Btn, Stepper } from '../components/ui.jsx'
-import { TYPE_LABEL, CAN_APPROVE } from '../data.js'
+import { TYPE_LABEL, CAN_APPROVE, interviewRating } from '../data.js'
 import { useDialog } from '../components/DialogProvider.jsx'
+import { expectedSalaryLabel } from '../lib/candidate-salary.js'
 
 const BAND_APPROVE = '带宽由 HR 或 CEO 审批'
 const MONEY_APPROVE = '该项由财务或 CEO 审批'
@@ -126,7 +127,7 @@ export function RaiseApprovalPage({ approvals, act, toast, user }) {
       <Card title={<>{item.title} {emp?.flag === '留才预警' && <Chip kind="warn">留才预警</Chip>}<Chip kind="info">{item.id}</Chip></>}>
         <Hint>同意后更新员工月薪，并记入入转调离事件。未提交月份的算薪会引用新月薪。</Hint>
         <div className="grid g3" style={{ marginBottom: 10 }}>
-          <div className="card kpi" style={{ margin: 0 }}><div className="label">当前年薪</div><div className="num">{fromY != null ? fromY + '万' : '—'}</div><div className="sub flat">{emp ? `${emp.name} · ${emp.grade}` : ''}</div></div>
+          <div className="card kpi" style={{ margin: 0 }}><div className="label">当前年薪</div><div className="num">{fromY != null ? fromY + '万' : '—'}</div><div className="sub flat">{emp ? `${emp.name} · ${emp.job_family}` : ''}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">绩效</div><div className="num" style={{ color: 'var(--ok)' }}>{payload.rating || '—'}</div><div className="sub flat">{payload.note || item.summary}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">建议年薪</div><div className="num" style={{ color: 'var(--accent)' }}>{toY != null ? toY + '万' : '—'}</div><div className="sub flat">月薪 {payload.to_monthly?.toLocaleString('zh-CN') || '—'}</div></div>
         </div>
@@ -163,7 +164,7 @@ export function OptionApprovalPage({ approvals, act, toast, user }) {
       <Card title={<>{item.title} <Chip kind="info">{item.id}</Chip></>}>
         <Hint>同意后写入期权授予台账。股数为万股口径，与台账一致。</Hint>
         <div className="grid g3" style={{ marginBottom: 10 }}>
-          <div className="card kpi" style={{ margin: 0 }}><div className="label">员工</div><div className="num" style={{ fontSize: 20 }}>{emp?.name || payload.employee_id || '—'}</div><div className="sub flat">{emp ? `${emp.job_family} ${emp.grade}` : ''}</div></div>
+          <div className="card kpi" style={{ margin: 0 }}><div className="label">员工</div><div className="num" style={{ fontSize: 20 }}>{emp?.name || payload.employee_id || '—'}</div><div className="sub flat">{emp ? emp.job_family : ''}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">授予股数</div><div className="num">{payload.share_count ?? '—'} 万股</div><div className="sub flat">行权价 {payload.exercise_price ?? 1} / 公允价 {payload.fair_value ?? 50}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">归属</div><div className="num" style={{ fontSize: 20 }}>{payload.vesting_months || 48} 月</div><div className="sub flat">cliff {payload.cliff_months || 12} 月</div></div>
         </div>
@@ -193,9 +194,9 @@ export function OfferApprovalPage({ approvals, act, toast, user, goto }) {
   if (!real) {
     return (
       <Card title="Offer 审批">
-        <Hint>没有 Offer 审批。请在「候选人管线」对 Offer 阶段的候选人发起。</Hint>
+        <Hint>没有 Offer 审批。请在「简历库」对 Offer 阶段的候选人发起。</Hint>
         {goto && (user?.role === 'hr' || user?.role === 'founder') && (
-          <div style={{ marginTop: 10 }}><Btn sm onClick={() => goto('candidates')}>打开候选人管线</Btn></div>
+          <div style={{ marginTop: 10 }}><Btn sm onClick={() => goto('candidates')}>打开简历库</Btn></div>
         )}
       </Card>
     )
@@ -227,13 +228,13 @@ export function OfferApprovalPage({ approvals, act, toast, user, goto }) {
       <Card title={<>{real.title} <Chip kind="info">{real.id}</Chip></>}>
         <div className="grid g3" style={{ marginBottom: 10 }}>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">候选人</div><div className="num" style={{ fontSize: 20 }}>{candidate.name || '—'}</div><div className="sub flat">来源 {candidate.source_channel || '—'} · 评分 {candidate.eval_score ?? '—'}</div></div>
-          <div className="card kpi" style={{ margin: 0 }}><div className="label">Offer 现金</div><div className="num" style={{ fontSize: 20, color: '#d97706' }}>{money(candidate.offer_amount)}</div><div className="sub flat">候选人期望：{money(candidate.expected_salary)}</div></div>
+          <div className="card kpi" style={{ margin: 0 }}><div className="label">Offer 现金</div><div className="num" style={{ fontSize: 20, color: '#d97706' }}>{money(candidate.offer_amount)}</div><div className="sub flat">候选人期望：{expectedSalaryLabel(candidate)}</div></div>
           <div className="card kpi" style={{ margin: 0 }}><div className="label">审批状态</div><div className="num" style={{ fontSize: 18, color: real.status === 'approved' ? 'var(--ok)' : real.status === 'rejected' ? '#dc2626' : '#f59e0b' }}>{real.status === 'approved' ? '已通过' : real.status === 'rejected' ? '已驳回' : '待审批'}</div><div className="sub flat">发起人：{real.who}</div></div>
         </div>
         <div className="grid g2" style={{ marginBottom: 10 }}>
           <div className="card" style={{ margin: 0 }}>
             <b>招聘需求与预算</b>
-            <Hint style={{ marginTop: 6 }}>{requisition ? `${requisition.title} · ${requisition.job_family || '—'} · ${requisition.grade || '—'} · ${requisition.city || '—'}` : '未关联招聘需求'}</Hint>
+            <Hint style={{ marginTop: 6 }}>{requisition ? `${requisition.title} · ${requisition.job_family || '—'} · ${requisition.city || '—'}` : '未关联招聘需求'}</Hint>
             <Hint>月薪预算：{requisition ? `${money(requisition.salary_min)} – ${money(requisition.salary_max)}` : '—'}</Hint>
             {requisition?.reason && <Hint>招聘理由：{requisition.reason}</Hint>}
           </div>
@@ -251,8 +252,8 @@ export function OfferApprovalPage({ approvals, act, toast, user, goto }) {
         <Card title={`面试记录（${interviews.length} 轮）`} style={{ margin: '0 0 10px' }}>
           {interviews.length ? (
             <table>
-              <thead><tr><th>轮次</th><th>面试官</th><th>日期</th><th>结果</th><th>评分</th><th>评价</th></tr></thead>
-              <tbody>{interviews.map((item, index) => <tr key={`${item.round_no}-${index}`}><td>{item.round_no}</td><td>{item.interviewer || '—'}</td><td>{item.interview_date || '—'}</td><td>{item.result || '—'}</td><td>{item.score ?? '—'}</td><td className="hint">{item.notes || '—'}</td></tr>)}</tbody>
+              <thead><tr><th>轮次</th><th>面试官</th><th>日期</th><th>评分</th><th>面评</th></tr></thead>
+              <tbody>{interviews.map((item, index) => <tr key={`${item.round_no}-${index}`}><td>{item.round_no}</td><td>{item.interviewer || '—'}</td><td>{item.interview_date || '—'}</td><td><Chip kind={interviewRating(item.result).kind}>{interviewRating(item.result).label}</Chip></td><td className="hint">{item.notes || '—'}</td></tr>)}</tbody>
             </table>
           ) : <Hint>暂无面试记录；审批前应补齐面试证据。</Hint>}
         </Card>

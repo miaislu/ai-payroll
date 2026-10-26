@@ -5,7 +5,9 @@ import multer from 'multer'
 import path from 'node:path'
 import { mkdirSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { extractText, parseResume, RESUME_APPLY_MAP } from '../lib/resume_parser.js'
+import { extractText, parseResume } from '../lib/resume_parser.js'
+import { normalizeResumeProfile, resumeResultToken } from '../lib/resume_profile.js'
+import { employeeResumeSnapshot, writeEmployeeResumeProfile } from '../lib/employee_resume_apply.js'
 import { randomUUID } from 'node:crypto'
 import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
 import { isDate } from '../lib/periods.js'
@@ -45,6 +47,7 @@ employee.get('/:id/profile', (req, res) => {
   if (!e) return res.status(404).json({ error: '员工不存在' })
   res.json({
     employee: e,
+    recruitment_candidate: db.prepare('SELECT id,name,source_channel FROM candidates WHERE employee_id=?').get(e.id) || null,
     emergency_contacts: childRows('emergency_contacts', e.id),
     education: childRows('employee_education', e.id),
     work_experience: childRows('employee_work_experience', e.id),
@@ -185,7 +188,8 @@ employee.post('/:id/resume', (req, res, next) => {
 
 // 简历列表
 employee.get('/:id/resume', (req, res) => {
-  res.json(db.prepare('SELECT id, filename, original_name, content_type, size, uploaded_at, parse_status, parse_engine, parsed_data FROM employee_resumes WHERE employee_id=? ORDER BY id DESC').all(req.params.id))
+  res.json(db.prepare('SELECT id, filename, original_name, content_type, size, uploaded_at, parse_status, parse_engine, parsed_data FROM employee_resumes WHERE employee_id=? ORDER BY id DESC').all(req.params.id)
+    .map(row => ({ ...row, result_token: resumeResultToken(row.parsed_data) })))
 })
 
 // 下载/预览简历文件
@@ -205,59 +209,38 @@ employee.delete('/:id/resume/:rid', (req, res) => {
   res.json({ ok: true })
 })
 
-// 解析简历 → 默认本地规则；环境开关与用户逐次授权同时满足时才调用外部 LLM
+// 解析简历 → 显式选择本机模型或基础规则；保留外部 LLM 双重授权限制
 employee.post('/:id/resume/:rid/parse', async (req, res) => {
   const row = db.prepare('SELECT * FROM employee_resumes WHERE id=? AND employee_id=?').get(req.params.rid, req.params.id)
   if (!row) return res.status(404).json({ error: '简历不存在' })
   const { text, engine, unsupported, error } = await extractText(row.file_path, row.content_type, row.original_name)
-  if (unsupported) return res.status(400).json({ error: '暂不支持该文件类型解析（支持 txt/md/docx/pdf）' })
+  if (unsupported) return res.status(400).json({ error: '暂不支持该文件类型解析（支持 txt/md/docx/pdf/xlsx/xls）' })
   if (!text.trim()) return res.status(400).json({ error: '未能从文件中提取文本' + (error ? '：' + error : '') })
   const parsed = await parseResume(text, {
+    mode: req.body?.mode,
     allowExternal: req.body?.allow_external === true,
     onExternal: meta => audit(req.user, 'external_llm_request', 'employee_resume', row.id, null, meta)
   })
   db.prepare("UPDATE employee_resumes SET parse_status='parsed', parse_engine=?, parsed_data=?, text_preview=? WHERE id=?")
     .run(engine ? parsed.engine + '+extract(' + engine + ')' : parsed.engine, JSON.stringify(parsed), text.slice(0, 500), req.params.rid)
   audit(req.user, 'parse', 'employee_resume', req.params.rid, { parse_status: row.parse_status }, { parse_status: 'parsed', engine: parsed.engine })
-  res.json({ ok: true, id: req.params.rid, engine: parsed.engine, parsed, text_preview: text.slice(0, 300) })
+  res.json({ ok: true, id: req.params.rid, engine: parsed.engine, parsed, result_token: resumeResultToken(JSON.stringify(parsed)), text_preview: text.slice(0, 300) })
 })
 
-// 应用解析结果 → 更新档案（基础字段 + 教育 + 工作经历；已存在的记录跳过）
+// 应用解析结果 → 更新全部个人字段与经历；同一段经历可更新，旧结果可显式替换。
 employee.post('/:id/resume/:rid/apply', (req, res) => {
   const row = db.prepare('SELECT * FROM employee_resumes WHERE id=? AND employee_id=?').get(req.params.rid, req.params.id)
   if (!row) return res.status(404).json({ error: '简历不存在' })
   let parsed
   try { parsed = JSON.parse(row.parsed_data) } catch { return res.status(400).json({ error: '该简历尚未解析，请先执行解析' }) }
-  const applied = { basic: 0, education: 0, work_experience: 0 }
-  // 基础字段（白名单）
-  const b = parsed.basic || {}
-  const sets = [], args = []
-  for (const f of RESUME_APPLY_MAP.basic) {
-    if (b[f] !== undefined && b[f] !== '' && b[f] !== null) { sets.push(`${f}=?`); args.push(String(b[f])); applied.basic++ }
-  }
+  if (req.body?.result_token && req.body.result_token !== resumeResultToken(row.parsed_data)) return res.status(409).json({ error: '简历结果已变化，请重新打开最新结果' })
+  const profile = normalizeResumeProfile(req.body?.personal_profile || parsed)
+  let applied
   inTransaction(() => {
-    if (sets.length) {
-      args.push(req.params.id)
-      db.prepare(`UPDATE employees SET ${sets.join(',')} WHERE id=?`).run(...args)
-    }
-    // 教育经历（学校已存在则跳过）
-    for (const ed of parsed.education || []) {
-      if (!ed.school) continue
-      const dup = db.prepare('SELECT id FROM employee_education WHERE employee_id=? AND school=?').get(req.params.id, ed.school)
-      if (dup) continue
-      db.prepare('INSERT INTO employee_education(employee_id,school,qualification,major,graduation_year,note) VALUES(?,?,?,?,?,?)')
-        .run(req.params.id, ed.school, ed.qualification || '', ed.major || '', ed.graduation_year || null, ed.note || '')
-      applied.education++
-    }
-    // 工作经历（公司已存在则跳过）
-    for (const w of parsed.work_experience || []) {
-      if (!w.company) continue
-      const dup = db.prepare('SELECT id FROM employee_work_experience WHERE employee_id=? AND company=?').get(req.params.id, w.company)
-      if (dup) continue
-      db.prepare('INSERT INTO employee_work_experience(employee_id,company,title,start_date,end_date,note) VALUES(?,?,?,?,?,?)')
-        .run(req.params.id, w.company, w.title || '', w.start_date || '', w.end_date || '', w.note || '')
-      applied.work_experience++
-    }
+    const before = employeeResumeSnapshot(req.params.id)
+    applied = writeEmployeeResumeProfile(req.params.id, profile, { replaceExperience: req.body?.replace_experience === true })
+    db.prepare('INSERT INTO resume_apply_history(employee_id,resume_id,before_json,after_json,actor_user_id,created_at) VALUES(?,?,?,?,?,?)')
+      .run(req.params.id, row.id, JSON.stringify(before), JSON.stringify(employeeResumeSnapshot(req.params.id)), req.user.id, new Date().toISOString())
     db.prepare("UPDATE employee_resumes SET parse_status='applied' WHERE id=?").run(req.params.rid)
     audit(req.user, 'apply', 'employee_resume', req.params.rid, { parse_status: row.parse_status }, { parse_status: 'applied', applied })
   })

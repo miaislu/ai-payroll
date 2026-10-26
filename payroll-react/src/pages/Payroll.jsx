@@ -105,7 +105,7 @@ function FragmentRow({ row, open, toggle }) {
   return (
     <>
       <tr>
-        <td>{row.name} <Chip kind="gray">{row.grade}</Chip>{row.status === 'departed' && <Chip kind="warn">离职</Chip>}</td>
+        <td>{row.name}{row.status === 'departed' && <Chip kind="warn">离职</Chip>}</td>
         <td>{row.category === 'tech' ? '技术' : row.category === 'support' ? '职能' : row.category === 'mgmt' ? '管理' : '—'}</td>
         <td>{row.base}</td><td>{row.perf}</td><td>{row.ot}</td><td>{row.sf}</td><td>{row.tax}</td><td><b>{row.net}</b></td>
         <td>{flag ? <span className={`chip ${flag.kind}`} style={flag.detail ? { cursor: 'pointer' } : undefined} onClick={flag.detail ? toggle : undefined}>{flag.text}</span> : <span className="hint">—</span>}</td>

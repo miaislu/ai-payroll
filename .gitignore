@@ -23,3 +23,27 @@ __pycache__/
 
 # 本地测试临时文件
 /tmp/
+
+# 本机资料、验证截图、私有业务配置与备份不进入公开仓库
+/artifacts/
+**/uploads/
+**/backups/
+**/private-tools/
+job-catalog.json
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-journal
+*.db.backup*
+*.backup
+*.tar.gz
+*.zip
+*.xlsx
+*.xls
+*.docx
+*.pdf
+*.pem
+*.key

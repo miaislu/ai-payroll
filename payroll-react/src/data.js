@@ -6,9 +6,9 @@ export const DIRECTIONS = Object.fromEntries([
 export const CITIES = Object.fromEntries(['上海', '北京', '深圳', '苏州', '无锡', '合肥', '武汉', '成都', '西安', '杭州', '南京', '广州', '厦门'].map(name => [name, true]))
 
 export const PAGES = {
-  dashboard: ['工作台', '小公司人力 · 员工 / 招聘 / 审批 / 成本'],
+  dashboard: ['工作台', 'HR 管理系统 · 员工 / 招聘 / 审批 / 成本'],
   recruiting: ['招聘总览', '漏斗 · 周期 · 成本 · 进行中需求'],
-  candidates: ['候选人管线', 'Kanban 看板 · 阶段流转 · Offer'],
+  candidates: ['简历库', '简历建档 · 面试安排 · 流转记录 · 录用关联'],
   requisitions: ['招聘需求', '编制 · 预算区间 · 状态管理'],
   interviews: ['面试记录', '轮次 · 面试官 · 评分'],
   channels: ['渠道与成本', '渠道效果 · 费用 · 人均招聘成本'],
@@ -55,7 +55,7 @@ export const NAV = [
   { page: 'dashboard', ico: '📊', label: '工作台' },
   { group: '招聘管理' },
   { page: 'recruiting', ico: '🎯', label: '招聘总览' },
-  { page: 'candidates', ico: '📋', label: '候选人管线' },
+  { page: 'candidates', ico: '📋', label: '简历库' },
   { page: 'requisitions', ico: '📌', label: '招聘需求' },
   { page: 'interviews', ico: '🤝', label: '面试记录' },
   { page: 'channels', ico: '📣', label: '渠道与成本' },
@@ -85,17 +85,34 @@ export const NAV = [
 export const CANDIDATE_STAGES = [
   { key: 'new', label: '新简历', color: '#64748b' },
   { key: 'screening', label: '初筛', color: '#0ea5e9' },
-  { key: 'interview', label: '面试', color: '#8b5cf6' },
+  { key: 'waiting', label: '待面试', color: '#06b6d4' },
+  { key: 'interview', label: '面试中', color: '#8b5cf6' },
   { key: 'offer', label: 'Offer', color: '#f59e0b' },
-  { key: 'hired', label: '已入职', color: '#10b981' },
+  { key: 'accepted', label: '已录用', color: '#10b981' },
+  { key: 'hired', label: '已建员工档案', color: '#059669' },
   { key: 'rejected', label: '已淘汰', color: '#ef4444' },
   { key: 'withdrawn', label: '已放弃', color: '#94a3b8' }
 ]
+export const candidateStatusLabel = candidate => candidate.stage === 'interview'
+  ? `第 ${candidate.current_round || 1} 轮面试中`
+  : candidate.stage === 'waiting' ? `待面试 · 第 ${candidate.current_round || 1} 轮`
+    : CANDIDATE_STAGES.find(item => item.key === candidate.stage)?.label || candidate.stage
+export const INTERVIEW_STATUS_LABELS = { scheduled: '待面试', in_progress: '面试中', completed: '已完成', cancelled: '已取消' }
 export const REQUISITION_STATUS = [
   { key: 'draft', label: '草稿' }, { key: 'open', label: '招聘中' },
   { key: 'interview', label: '面试中' }, { key: 'closed', label: '已关闭' },
   { key: 'cancelled', label: '已取消' }
 ]
+export const INTERVIEW_RATINGS = [
+  { key: 'strong_recommend', label: '强烈推荐', kind: 'ok', score: 5 },
+  { key: 'recommend', label: '推荐录用', kind: 'ok', score: 4 },
+  { key: 'pending', label: '待定', kind: 'gray', score: 3 },
+  { key: 'not_recommend', label: '不推荐', kind: 'warn', score: 2 },
+  { key: 'strong_not_recommend', label: '强烈不推荐', kind: 'warn', score: 1 }
+]
+export const interviewRating = key => INTERVIEW_RATINGS.find(item => item.key === key)
+  || ({ pass: INTERVIEW_RATINGS[1], fail: INTERVIEW_RATINGS[3] }[key])
+  || { key, label: key || '待定', kind: 'gray', score: 3 }
 export const COST_CATEGORY_LABELS = { salary: '应发工资', social: '公司社保', fund: '公司公积金', option: '期权摊销', recruiting: '招聘成本', other: '其他' }
 
 export const TYPE_LABEL = { band: '带宽', raise: '调薪', option: '期权', offer: 'Offer' }

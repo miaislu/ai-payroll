@@ -1,16 +1,89 @@
-// 简历解析引擎：文本提取（txt/md/docx/pdf）+ 默认本地规则；外部 LLM 必须双重显式授权
+// 简历解析：文本提取 + 显式选择本机模型/基础规则；外部 LLM 必须双重显式授权
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import mammoth from 'mammoth'
 import { PDFParse } from 'pdf-parse'
+import yauzl from 'yauzl'
 import { chat, llmConfigured, LLM_MODEL } from './llm.js'
 import { redactForExternalLlm } from './pii.js'
+import { extractExcelText } from './excel_resume.js'
+import { parseWithLocalModel, ResumeModelError } from './local_resume_model.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ── 文本提取 ──
 const TEXT_EXT = ['.txt', '.md', '.text', '.csv', '.json', '.log']
+const MAX_DOCX_XML_BYTES = 8 * 1024 * 1024
+
+function decodeXmlEntities(value) {
+  return String(value)
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+export function docxXmlToText(xml) {
+  return decodeXmlEntities(String(xml || '')
+    .replace(/<w:tab\b[^>]*\/?\s*>/gi, '\t')
+    .replace(/<w:br\b[^>]*\/?\s*>/gi, '\n')
+    .replace(/<\/w:p\s*>/gi, '\n')
+    .replace(/<\/w:tr\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ''))
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function extractDocxRawText(buffer) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const fail = (zip, error) => {
+      if (settled) return
+      settled = true
+      try { zip?.close() } catch { /* already closed */ }
+      reject(error)
+    }
+    yauzl.fromBuffer(buffer, { lazyEntries: true, autoClose: true }, (error, zip) => {
+      if (error) return fail(null, error)
+      zip.on('error', err => fail(zip, err))
+      zip.on('entry', entry => {
+        if (entry.fileName !== 'word/document.xml') return zip.readEntry()
+        if (entry.uncompressedSize > MAX_DOCX_XML_BYTES) {
+          return fail(zip, new Error(`DOCX 正文超过 ${MAX_DOCX_XML_BYTES / 1024 / 1024}MB 解压上限`))
+        }
+        zip.openReadStream(entry, (streamError, stream) => {
+          if (streamError) return fail(zip, streamError)
+          const chunks = []
+          let size = 0
+          stream.on('data', chunk => {
+            size += chunk.length
+            if (size > MAX_DOCX_XML_BYTES) {
+              stream.destroy(new Error(`DOCX 正文超过 ${MAX_DOCX_XML_BYTES / 1024 / 1024}MB 解压上限`))
+              return
+            }
+            chunks.push(chunk)
+          })
+          stream.on('error', err => fail(zip, err))
+          stream.on('end', () => {
+            if (settled) return
+            settled = true
+            const text = docxXmlToText(Buffer.concat(chunks).toString('utf8'))
+            try { zip.close() } catch { /* already closed */ }
+            resolve(text)
+          })
+        })
+      })
+      zip.on('end', () => fail(zip, new Error('DOCX 缺少 word/document.xml')))
+      zip.readEntry()
+    })
+  })
+}
+
 export async function extractText(filePath, contentType = '', filename = '') {
   const ext = path.extname(filename || filePath).toLowerCase()
   let buf
@@ -20,12 +93,15 @@ export async function extractText(filePath, contentType = '', filename = '') {
     return { text: '', engine: null, error: '文件读取失败：' + e.message }
   }
   try {
+    if (['.xlsx', '.xls'].includes(ext)) {
+      return { text: await extractExcelText(buf), engine: 'excel(sheetjs)' }
+    }
     if (TEXT_EXT.includes(ext) || (contentType || '').startsWith('text/')) {
       return { text: buf.toString('utf-8'), engine: 'text' }
     }
     if (ext === '.docx' || (contentType || '').includes('wordprocessingml')) {
-      const r = await mammoth.extractRawText({ buffer: buf })
-      return { text: r.value, engine: 'docx(mammoth)' }
+      const text = await extractDocxRawText(buf)
+      return { text, engine: 'docx(yauzl)' }
     }
     if (ext === '.pdf' || (contentType || '').includes('pdf')) {
       const parser = new PDFParse({ data: buf })
@@ -204,10 +280,12 @@ function redactResume(text, localBasic) {
   return redacted
 }
 
-export async function parseResume(text, { allowExternal = false, onExternal = null } = {}) {
+export async function parseResume(text, { mode, allowExternal = false, onExternal = null } = {}) {
+  if (mode && !['local_model', 'rules'].includes(mode)) throw new ResumeModelError('请选择本地模型解析或基础规则提取', 400)
+  if (mode === 'local_model') return enrichParsed(await parseWithLocalModel(text), text)
   const truncated = text.slice(0, 6000)
   const externalEnabled = process.env.RESUME_EXTERNAL_LLM === 'true' && llmConfigured()
-  if (externalEnabled && allowExternal) {
+  if (mode !== 'rules' && externalEnabled && allowExternal) {
     try {
       const local = parseResumeByRules(truncated)
       const redacted = redactResume(truncated, local.basic)

@@ -5,10 +5,11 @@ import { auth } from '../lib/auth.js'
 import { validateEmployee } from '../lib/validators.js'
 import { employeesForPeriod, periodIsLocked, upsertCompensationTerm } from '../lib/employee_terms.js'
 import { currentPeriod, isDate, isPeriod, monthBounds } from '../lib/periods.js'
+import { candidateForEmployee, linkCandidateEmployee } from '../lib/candidate_workflow.js'
 
 export const staff = Router()
 
-const EMP_SENSITIVE = ['monthly_base', 'perf_ratio', 'special_deduction', 'annual_option_value', 'severance_amount', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'personal_email', 'alternate_mobile', 'current_address', 'permanent_address']
+const EMP_SENSITIVE = ['monthly_base', 'perf_ratio', 'special_deduction', 'special_deductions_json', 'fixed_salary_months', 'annual_bonus_months', 'annual_option_value', 'severance_amount', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'personal_email', 'alternate_mobile', 'current_address', 'permanent_address']
 const FINANCE_EMPLOYEE_FIELDS = ['id', 'name', 'grade', 'job_family', 'city', 'category', 'status', 'employment_type', 'department_id', 'hire_month', 'leave_month']
 
 staff.get('/employees', auth(), (req, res) => {
@@ -31,6 +32,7 @@ staff.post('/employees', auth(['hr', 'founder']), (req, res) => {
   const { errors, e } = validateEmployee(req.body || {})
   if (errors.length) return res.status(400).json({ error: errors.join('；') })
   const b = req.body || {}
+  if (b.candidate_id) candidateForEmployee(b.candidate_id)
   if (b.status != null && !['active', 'offer', 'departed'].includes(b.status)) return res.status(400).json({ error: '员工状态不合法' })
   if (b.employment_type != null && !['employee', 'consultant', 'intern'].includes(b.employment_type)) return res.status(400).json({ error: '用工类型不合法' })
   const status = b.status || 'active'
@@ -46,11 +48,18 @@ staff.post('/employees', auth(['hr', 'founder']), (req, res) => {
   const departmentId = b.department_id ? Number(b.department_id) : null
   if (departmentId && !db.prepare('SELECT 1 FROM departments WHERE id=?').get(departmentId)) return res.status(400).json({ error: '部门不存在' })
   const id = inTransaction(() => {
-    const r = db.prepare('INSERT INTO employees(name,grade,job_family,city,monthly_base,perf_ratio,special_deduction,hire_month,hire_date,department_id,category,status,employment_type,supplemental_fund_rate,leave_month,leave_date,severance_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction, e.hire_month, e.hire_date, departmentId, e.category, status, etype, sfund, leaveMonth, leaveDate, severance)
+    const r = db.prepare(`INSERT INTO employees(
+      name,grade,job_family,city,monthly_base,perf_ratio,special_deduction,special_deductions_json,
+      fixed_salary_months,annual_bonus_months,hire_month,hire_date,department_id,category,status,
+      employment_type,supplemental_fund_rate,leave_month,leave_date,severance_amount
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(e.name, e.grade, e.job_family, e.city, e.monthly_base, e.perf_ratio, e.special_deduction,
+        e.special_deductions_json, e.fixed_salary_months, e.annual_bonus_months, e.hire_month, e.hire_date,
+        departmentId, e.category, status, etype, sfund, leaveMonth, leaveDate, severance)
     const employee = db.prepare('SELECT * FROM employees WHERE id=?').get(r.lastInsertRowid)
     upsertCompensationTerm(employee, e.hire_month, { actor: req.user.name })
     audit(req.user, 'create', 'employee', r.lastInsertRowid, null, employee)
+    if (b.candidate_id) linkCandidateEmployee(Number(b.candidate_id), Number(r.lastInsertRowid), e.hire_date, req.user)
     return r.lastInsertRowid
   })
   res.json({ ok: true, id })
@@ -93,8 +102,14 @@ staff.put('/employees/:id', auth(['hr', 'founder']), (req, res) => {
   inTransaction(() => {
     const immediate = effectiveMonth <= currentPeriod()
     const master = immediate ? { ...e, department_id: departmentId, status, employment_type: etype, supplemental_fund_rate: sfund } : before
-    db.prepare('UPDATE employees SET name=?,grade=?,job_family=?,city=?,monthly_base=?,perf_ratio=?,special_deduction=?,hire_month=?,hire_date=?,department_id=?,category=?,status=?,employment_type=?,supplemental_fund_rate=?,leave_month=?,leave_date=?,severance_amount=? WHERE id=?')
-      .run(e.name, master.grade, master.job_family, master.city, master.monthly_base, master.perf_ratio, master.special_deduction, e.hire_month, e.hire_date, master.department_id, master.category, status, master.employment_type, master.supplemental_fund_rate, leaveMonth, leaveDate, severance, req.params.id)
+    db.prepare(`UPDATE employees SET
+      name=?,grade=?,job_family=?,city=?,monthly_base=?,perf_ratio=?,special_deduction=?,special_deductions_json=?,
+      fixed_salary_months=?,annual_bonus_months=?,hire_month=?,hire_date=?,department_id=?,category=?,status=?,
+      employment_type=?,supplemental_fund_rate=?,leave_month=?,leave_date=?,severance_amount=? WHERE id=?`)
+      .run(e.name, master.grade, master.job_family, master.city, master.monthly_base, master.perf_ratio,
+        master.special_deduction, master.special_deductions_json, master.fixed_salary_months, master.annual_bonus_months,
+        e.hire_month, e.hire_date, master.department_id, master.category, status, master.employment_type,
+        master.supplemental_fund_rate, leaveMonth, leaveDate, severance, req.params.id)
     after = db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id)
     const compensationTerm = upsertCompensationTerm({ ...after, ...e, department_id: departmentId, employment_type: etype, supplemental_fund_rate: sfund }, effectiveMonth, { actor: req.user.name })
     audit(req.user, 'update', 'employee', req.params.id, before, { ...after, effective_month: effectiveMonth, compensation_term: compensationTerm })

@@ -10,6 +10,10 @@ import { percentiles, parseCsv, normalizeSample, bandFromSamples } from '../lib/
 import { suggestRaise } from '../lib/performance.js'
 import { blockingPayrollIssues } from '../lib/payroll_store.js'
 import { normalizeOptionInput, optionMetrics } from '../lib/calc.js'
+import { docxXmlToText } from '../lib/resume_parser.js'
+import { categoryOfJob } from '../lib/job_catalog.js'
+import { normalizeSpecialDeductions } from '../lib/special_deductions.js'
+import { formatRequisitionPosting } from '../lib/requisition_export.js'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -18,6 +22,46 @@ const zhang = {
   id: 1, name: '张三', grade: 'P5', city: '上海', monthly_base: 25000, perf_ratio: 0.32,
   special_deduction: 3000, hire_month: '2025-01', status: 'active', employment_type: 'employee'
 }
+
+test('岗位目录按技术、管理、职能归类', () => {
+  assert.equal(categoryOfJob('数字验证'), 'tech')
+  assert.equal(categoryOfJob('工艺整合PIE'), 'tech')
+  assert.equal(categoryOfJob('工程管理'), 'mgmt')
+  assert.equal(categoryOfJob('行政'), 'support')
+  assert.equal(categoryOfJob('研发管理'), 'mgmt')
+  assert.equal(categoryOfJob('人力资源'), 'support')
+})
+
+test('专项附加扣除按勾选项目汇总并阻止房贷与租金并用', () => {
+  const selected = normalizeSpecialDeductions({
+    child_education: { enabled: true, amount: 2000 },
+    housing_rent: { enabled: true, amount: 1500 },
+    serious_illness: { enabled: true, amount: 20000 }
+  }, '上海')
+  assert.equal(selected.monthly, 3500)
+  assert.deepEqual(selected.errors, [])
+  const conflict = normalizeSpecialDeductions({
+    housing_loan: { enabled: true, amount: 1000 },
+    housing_rent: { enabled: true, amount: 1500 }
+  }, '上海')
+  assert.match(conflict.errors.join('；'), /不能同时享受/)
+})
+
+test('招聘需求导出包含完整可发布 JD 与薪酬包', () => {
+  const content = formatRequisitionPosting({
+    title: '数字验证工程师', job_category: 'tech', job_family: '数字验证', city: '上海', headcount: 2,
+    headcount_max: 3, priority: 'P0', team_label: '测试研发团队', target_timing: 'Q1-2027~Q2-2027',
+    employment_type: 'employee', salary_min: 30000, salary_max: 50000, fixed_salary_months: 13,
+    annual_bonus_months: 2, responsibilities: '负责验证平台建设', requirements: '熟悉 UVM',
+    education_requirement: '本科', experience_requirement: '3-5年', skills: 'UVM, SystemVerilog', reason: '新增项目'
+  })
+  assert.match(content, /招聘岗位信息/)
+  assert.match(content, /全年固定薪资：13 个月/)
+  assert.match(content, /年终奖约定：2 个月/)
+  assert.match(content, /招聘人数：2 人（弹性上限 3 人）/)
+  assert.match(content, /建议到岗时间：Q1-2027~Q2-2027/)
+  assert.match(content, /负责验证平台建设/)
+})
 
 test('劳务报酬使用三级预扣率', () => {
   assert.equal(consultantTax(30000), 5200)
@@ -207,6 +251,11 @@ test('简历文件头必须与扩展名匹配', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('DOCX XML 文本提取保留段落、换行与实体字符', () => {
+  const xml = '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>张&amp;三</w:t></w:r><w:br/><w:r><w:t>RTL</w:t></w:r></w:p><w:p><w:r><w:t>&lt;P5&gt;</w:t></w:r></w:p></w:body></w:document>'
+  assert.equal(docxXmlToText(xml), '张&三\nRTL\n<P5>')
 })
 
 test('加班费按月薪/21.75/8 与 1.5/2/3 倍', () => {

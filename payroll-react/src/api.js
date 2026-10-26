@@ -99,8 +99,11 @@ export const uploadResume = (id, file) => {
     return r.json()
   })
 }
-export const parseResume = (id, rid, allowExternal = false) => api('/employees/' + id + '/resume/' + rid + '/parse', { method: 'POST', body: { allow_external: allowExternal } })
-export const applyResume = (id, rid) => api('/employees/' + id + '/resume/' + rid + '/apply', { method: 'POST', body: {} })
+const resumeParseOptions = mode => typeof mode === 'string' ? { mode } : { allow_external: mode === true }
+export const getResumeParserStatus = () => api('/recruiting/resume-parser/status')
+export const getJobCatalog = () => api('/recruiting/job-catalog')
+export const parseResume = (id, rid, mode = 'rules') => api('/employees/' + id + '/resume/' + rid + '/parse', { method: 'POST', body: resumeParseOptions(mode) })
+export const applyResume = (id, rid, body = {}) => api('/employees/' + id + '/resume/' + rid + '/apply', { method: 'POST', body })
 export const deleteResume = (id, rid) => api('/employees/' + id + '/resume/' + rid, { method: 'DELETE' })
 export const downloadAuthenticated = async (path, filename) => {
   const res = await fetch(BASE + path, { credentials: 'include' })
@@ -120,6 +123,15 @@ export const deleteRequisition = id => api('/recruiting/requisitions/' + id, { m
 export const getCandidates = () => api('/recruiting/candidates')
 export const getCandidatesKanban = () => api('/recruiting/candidates/kanban')
 export const createCandidate = body => api('/recruiting/candidates', { method: 'POST', body })
+export const createCandidateFromResume = async (file, fields = {}) => {
+  const form = new FormData()
+  form.append('resume', file)
+  for (const [key, value] of Object.entries(fields)) if (value != null) form.append(key, String(value))
+  const response = await fetch(BASE + '/recruiting/candidates/from-resume', { method: 'POST', credentials: 'include', body: form })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || '简历建档失败')
+  return data
+}
 export const updateCandidate = (id, body) => api('/recruiting/candidates/' + id, { method: 'PUT', body })
 export const deleteCandidate = id => api('/recruiting/candidates/' + id, { method: 'DELETE' })
 export const setCandidateStage = (id, body) => api('/recruiting/candidates/' + id + '/stage', { method: 'POST', body })
@@ -152,7 +164,9 @@ export const uploadCandidateResume = (id, file) => {
     return r.json()
   })
 }
-export const parseCandidateResume = (id, allowExternal = false) => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: { allow_external: allowExternal } })
+export const parseCandidateResume = (id, mode = 'rules') => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: resumeParseOptions(mode) })
+export const applyCandidateResume = (id, body) => api('/recruiting/candidates/' + id + '/resume/apply', { method: 'POST', body })
+export const matchCandidateRequisitions = (id, personal_profile) => api('/recruiting/candidates/' + id + '/requisition-match', { method: 'POST', body: { personal_profile } })
 export const deleteCandidateResume = id => api('/recruiting/candidates/' + id + '/resume', { method: 'DELETE' })
 export const downloadCandidateResume = (id, filename) => downloadAuthenticated('/recruiting/candidates/' + id + '/resume', filename)
 

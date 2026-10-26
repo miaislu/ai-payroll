@@ -95,7 +95,7 @@ dashboard.get('/dashboard/attrition', auth(OPS_ROLES), (req, res) => {
   const list = []
   for (const e of emps) {
     const b = bandOf(e.job_family)
-    const annual = e.monthly_base * 12 / 10000
+    const annual = e.monthly_base * (Number(e.fixed_salary_months ?? 12) + Number(e.annual_bonus_months ?? 0)) / 10000
     const below = b ? annual < b.p50 * 0.85 : false
     if (e.flag === '留才预警' || below) list.push({ name: e.name, job_family: e.job_family, annual: Math.round(annual), p50: b ? b.p50 : null, risk: e.flag === '留才预警' ? '高' : '中' })
   }

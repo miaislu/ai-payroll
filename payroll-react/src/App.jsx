@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { PAGES, ROLE_VIEWS, PARENT, NAV, CAN_APPROVE } from './data.js'
-import { login, getMe, getApprovals, approvalAction, logout, checkBackend } from './api.js'
+import { login, getMe, getApprovals, approvalAction, logout, checkBackend, getJobCatalog } from './api.js'
+import { setJobCatalog, resetJobCatalog } from './jobCatalog.js'
 import { parseHash, toHash, resolvePage } from './lib/hash-route.js'
 import Dashboard from './pages/Dashboard.jsx'
 import Benchmark from './pages/Benchmark.jsx'
@@ -36,6 +37,11 @@ const PAGES_COMP = {
   channels: Channels, org: Org, cost: CostDashboard, budget: Budget, forecast: Forecast,
   'employee-profile': EmployeeProfile, equity: Equity, expenses: Expenses
 }
+
+async function loadUserJobCatalog(user) {
+  if (['hr', 'founder'].includes(user.role)) setJobCatalog(await getJobCatalog())
+  else resetJobCatalog()
+}
 const DEMO_ACCOUNTS = import.meta.env.DEV
   ? [
     { username: 'founder', password: 'admin123', label: 'CEO' },
@@ -57,7 +63,7 @@ function LoginScreen({ onLogin, toast }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
       <div className="card" style={{ width: 380 }}>
-        <div className="logo" style={{ padding: '0 0 16px' }}><span className="dot">人</span>小公司人力</div>
+        <div className="logo" style={{ padding: '0 0 16px' }}><span className="dot">HR</span>HR 管理系统</div>
         <label className="f" style={{ marginBottom: 10 }}>用户名
           <input value={u} onChange={e => setU(e.target.value)} placeholder="用户名" />
         </label>
@@ -83,6 +89,7 @@ function LoginScreen({ onLogin, toast }) {
 export default function App() {
   const [page, setPage] = useState('dashboard')
   const [empId, setEmpId] = useState(null)
+  const [candidateId, setCandidateId] = useState(null)
   const [user, setUser] = useState(null)
   const [approvals, setApprovals] = useState([])
   const [toast, setToast] = useState(null)
@@ -99,6 +106,7 @@ export default function App() {
       if (!up) return
       try {
         const me = await getMe()
+        await loadUserJobCatalog(me)
         if (!alive) return
         setUser(me)
         try { setApprovals(await getApprovals()) } catch { /* emp 无审批列表 */ }
@@ -110,10 +118,11 @@ export default function App() {
     if (!user) return
     const apply = () => {
       const parsed = parseHash(window.location.hash)
-      const next = resolvePage(user.role, parsed.page, parsed.empId)
+      const next = resolvePage(user.role, parsed.page, parsed.candidateId ?? parsed.empId)
       setPage(next.page)
       setEmpId(next.empId)
-      const hash = toHash(next.page, next.empId)
+      setCandidateId(next.candidateId ?? null)
+      const hash = toHash(next.page, next.candidateId ?? next.empId)
       if (window.location.hash !== hash) history.replaceState(null, '', hash)
     }
     apply()
@@ -128,16 +137,18 @@ export default function App() {
 
   const handleLogin = async (username, password) => {
     const u = await login(username, password)
+    await loadUserJobCatalog(u)
     setUser(u)
     try { setApprovals(await getApprovals()) } catch { /* 审批失败不阻塞登录 */ }
     const parsed = parseHash(window.location.hash)
-    const next = resolvePage(u.role, parsed.page, parsed.empId)
-    history.replaceState(null, '', toHash(next.page, next.empId))
+    const next = resolvePage(u.role, parsed.page, parsed.candidateId ?? parsed.empId)
+    history.replaceState(null, '', toHash(next.page, next.candidateId ?? next.empId))
     showToast('欢迎，' + u.name)
   }
   const handleLogout = async () => {
     try { await logout() } catch { /* 忽略 */ }
     setUser(null)
+    resetJobCatalog()
     setApprovals([])
     history.replaceState(null, '', '#/dashboard')
   }
@@ -146,10 +157,10 @@ export default function App() {
 
   const role = user.role
   const goto = (p, id) => {
-    const next = resolvePage(role, p, id ?? empId)
-    const hash = toHash(next.page, next.empId)
+    const next = resolvePage(role, p, id ?? (p === 'employee-profile' ? empId : null))
+    const hash = toHash(next.page, next.candidateId ?? next.empId)
     if (window.location.hash !== hash) window.location.hash = hash
-    else { setPage(next.page); setEmpId(next.empId) }
+    else { setPage(next.page); setEmpId(next.empId); setCandidateId(next.candidateId ?? null) }
     window.scrollTo({ top: 0 })
   }
   const openProfile = id => goto('employee-profile', id)
@@ -167,7 +178,7 @@ export default function App() {
   return (
     <div id="app">
       <aside id="sidebar">
-        <div className="logo"><span className="dot">人</span>小公司人力</div>
+        <div className="logo"><span className="dot">HR</span>HR 管理系统</div>
         {NAV.map((item, i) => item.group ? (
           <div className="nav-sep" key={i}>{item.group}</div>
         ) : views.includes(item.page) && (
@@ -192,14 +203,14 @@ export default function App() {
           </div>
         </div>
         <div className="page active">
-          <ActivePage goto={goto} toast={showToast} approvals={approvals} act={act} backendUp={backendUp} user={user} empId={empId} openProfile={openProfile} />
+          <ActivePage goto={goto} toast={showToast} approvals={approvals} act={act} backendUp={backendUp} user={user} empId={empId} candidateId={candidateId} openProfile={openProfile} />
         </div>
       </main>
 
       <button id="fab" onClick={() => goto('copilot')} title="AI 助手">💬</button>
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
       <footer>
-        <span><span className="dot-live" />小公司人力管理系统</span>
+        <span><span className="dot-live" />HR 管理系统</span>
         <span>{backendUp === true ? '数据来自后端 API（SQLite）' : '未连接数据源'}</span>
       </footer>
     </div>

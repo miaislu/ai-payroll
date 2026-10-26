@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { repairLegacyResumeNames } from './lib/uploads.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 process.umask(0o077)
@@ -488,6 +489,123 @@ const MIGRATIONS = [
     sql: `ALTER TABLE payroll ADD COLUMN gross INTEGER;
           ALTER TABLE payroll ADD COLUMN regular_tax INTEGER;
           ALTER TABLE payroll ADD COLUMN severance_tax INTEGER;`
+  },
+  // v22：岗位三大类、薪酬包月数、专项附加扣除明细与可导出的招聘 JD
+  {
+    version: 22,
+    sql: `ALTER TABLE employees ADD COLUMN fixed_salary_months REAL NOT NULL DEFAULT 12;
+          ALTER TABLE employees ADD COLUMN annual_bonus_months REAL NOT NULL DEFAULT 0;
+          ALTER TABLE employees ADD COLUMN special_deductions_json TEXT NOT NULL DEFAULT '{}';
+          UPDATE employees
+          SET special_deductions_json='{"other_declared":{"enabled":true,"amount":' || special_deduction || '}}'
+          WHERE COALESCE(special_deduction,0)>0 AND special_deductions_json='{}';
+
+          ALTER TABLE employee_compensation_terms ADD COLUMN fixed_salary_months REAL NOT NULL DEFAULT 12;
+          ALTER TABLE employee_compensation_terms ADD COLUMN annual_bonus_months REAL NOT NULL DEFAULT 0;
+          ALTER TABLE employee_compensation_terms ADD COLUMN special_deductions_json TEXT NOT NULL DEFAULT '{}';
+          UPDATE employee_compensation_terms
+          SET fixed_salary_months=COALESCE((SELECT e.fixed_salary_months FROM employees e WHERE e.id=employee_id),12),
+              annual_bonus_months=COALESCE((SELECT e.annual_bonus_months FROM employees e WHERE e.id=employee_id),0),
+              special_deductions_json=COALESCE((SELECT e.special_deductions_json FROM employees e WHERE e.id=employee_id),'{}');
+
+          ALTER TABLE job_requisitions ADD COLUMN job_category TEXT NOT NULL DEFAULT 'tech';
+          ALTER TABLE job_requisitions ADD COLUMN employment_type TEXT NOT NULL DEFAULT 'employee';
+          ALTER TABLE job_requisitions ADD COLUMN fixed_salary_months REAL NOT NULL DEFAULT 12;
+          ALTER TABLE job_requisitions ADD COLUMN annual_bonus_months REAL NOT NULL DEFAULT 0;
+          ALTER TABLE job_requisitions ADD COLUMN responsibilities TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN requirements TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN education_requirement TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN experience_requirement TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN skills TEXT;
+          UPDATE job_requisitions SET job_category='support'
+          WHERE job_family IN ('人力资源','财务','行政','法务','市场','销售','采购','质量体系','商务','客户支持');
+          UPDATE job_requisitions SET job_category='mgmt'
+          WHERE job_family IN ('工程管理','研发管理','项目管理','生产管理','供应链管理','职能管理');`
+  },
+  // v23：招聘编制清单支持基准/弹性上限、团队、原始到岗口径与来源追踪
+  {
+    version: 23,
+    sql: `ALTER TABLE job_requisitions ADD COLUMN headcount_max INTEGER;
+          ALTER TABLE job_requisitions ADD COLUMN team_label TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN target_timing TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN source_reference TEXT;
+          ALTER TABLE job_requisitions ADD COLUMN source_key TEXT;
+          UPDATE job_requisitions SET headcount_max=headcount WHERE headcount_max IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_job_requisitions_source_key
+          ON job_requisitions(source_key);`
+  },
+  // v24：猎头渠道收费与收款信息；面试评分统一为五档
+  {
+    version: 24,
+    sql: `ALTER TABLE recruiting_channels ADD COLUMN fee_basis_months REAL;
+          ALTER TABLE recruiting_channels ADD COLUMN fee_rate REAL;
+          ALTER TABLE recruiting_channels ADD COLUMN guarantee_months REAL;
+          ALTER TABLE recruiting_channels ADD COLUMN payment_account_name TEXT;
+          ALTER TABLE recruiting_channels ADD COLUMN payment_account_number TEXT;
+          ALTER TABLE recruiting_channels ADD COLUMN payment_bank TEXT;
+          UPDATE interviews SET result='recommend', score=4 WHERE result='pass';
+          UPDATE interviews SET result='not_recommend', score=2 WHERE result='fail';
+          UPDATE interviews SET score=3 WHERE result='pending';`
+  },
+  // v25：候选人来源与渠道建立正式关联，猎头费用可追溯到具体人选
+  {
+    version: 25,
+    sql: `ALTER TABLE recruiting_channels ADD COLUMN contact_info TEXT;
+          ALTER TABLE candidates ADD COLUMN source_channel_id INTEGER;
+          ALTER TABLE channel_expenses ADD COLUMN candidate_id INTEGER;
+          UPDATE recruiting_channels SET fee_basis_months=NULL
+          WHERE fee_basis_months IS NOT NULL AND fee_basis_months NOT IN (6,12,13,15);
+          UPDATE candidates SET source_channel_id=(
+            SELECT rc.id FROM recruiting_channels rc WHERE rc.name=candidates.source_channel LIMIT 1
+          ) WHERE source_channel_id IS NULL;
+          CREATE INDEX IF NOT EXISTS idx_candidates_source_channel ON candidates(source_channel_id);
+          CREATE INDEX IF NOT EXISTS idx_channel_expenses_candidate ON channel_expenses(candidate_id);
+          CREATE TRIGGER IF NOT EXISTS fk_candidate_source_channel_insert BEFORE INSERT ON candidates
+          WHEN NEW.source_channel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM recruiting_channels WHERE id=NEW.source_channel_id)
+          BEGIN SELECT RAISE(ABORT,'candidates.source_channel_id 不存在'); END;
+          CREATE TRIGGER IF NOT EXISTS fk_candidate_source_channel_update BEFORE UPDATE OF source_channel_id ON candidates
+          WHEN NEW.source_channel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM recruiting_channels WHERE id=NEW.source_channel_id)
+          BEGIN SELECT RAISE(ABORT,'candidates.source_channel_id 不存在'); END;
+          CREATE TRIGGER IF NOT EXISTS fk_channel_expense_candidate_insert BEFORE INSERT ON channel_expenses
+          WHEN NEW.candidate_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM candidates WHERE id=NEW.candidate_id)
+          BEGIN SELECT RAISE(ABORT,'channel_expenses.candidate_id 不存在'); END;
+          CREATE TRIGGER IF NOT EXISTS fk_channel_expense_candidate_update BEFORE UPDATE OF candidate_id ON channel_expenses
+          WHEN NEW.candidate_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM candidates WHERE id=NEW.candidate_id)
+          BEGIN SELECT RAISE(ABORT,'channel_expenses.candidate_id 不存在'); END;`
+  },
+  // v26：简历库流转记录、面试预约与录用后建档
+  {
+    version: 26,
+    sql: `ALTER TABLE candidates ADD COLUMN current_round INTEGER NOT NULL DEFAULT 1;
+          ALTER TABLE interviews ADD COLUMN status TEXT NOT NULL DEFAULT 'completed';
+          CREATE UNIQUE INDEX idx_active_interview_round ON interviews(candidate_id,round_no) WHERE status IN ('scheduled','in_progress');
+          CREATE TABLE candidate_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+            type TEXT NOT NULL, from_stage TEXT, to_stage TEXT, round_no INTEGER,
+            interview_id INTEGER, note TEXT, actor TEXT NOT NULL, occurred_at TEXT NOT NULL,
+            snapshot_json TEXT
+          );
+          CREATE INDEX idx_candidate_events_candidate ON candidate_events(candidate_id,id);
+          CREATE INDEX idx_candidate_events_interview ON candidate_events(interview_id,id);
+          CREATE UNIQUE INDEX idx_candidate_employee_unique ON candidates(employee_id) WHERE employee_id IS NOT NULL;
+          UPDATE candidates SET current_round=COALESCE((SELECT MAX(round_no) FROM interviews WHERE candidate_id=candidates.id),1);
+          INSERT INTO candidate_events(candidate_id,type,to_stage,round_no,note,actor,occurred_at)
+          SELECT id,'legacy',stage,current_round,'历史档案迁移，保留当前状态；此前未记录的流转不作推断','system',strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM candidates;`
+  },
+  {
+    version: 27,
+    sql: `ALTER TABLE candidates ADD COLUMN expected_salary_range TEXT;`
+  },
+  {
+    version: 28,
+    sql: `ALTER TABLE candidates ADD COLUMN profile_json TEXT;
+          ALTER TABLE candidates ADD COLUMN resume_applied_hash TEXT;
+          CREATE TABLE resume_apply_history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, resume_id INTEGER,
+            before_json TEXT NOT NULL, after_json TEXT NOT NULL, actor_user_id INTEGER, created_at TEXT NOT NULL
+          );`,
+    run: connection => repairLegacyResumeNames(connection)
   }
 ]
 export function migrate() {
@@ -507,6 +625,7 @@ export function migrate() {
     db.exec('BEGIN')
     try {
       db.exec(m.sql)
+      m.run?.(db)
       db.prepare('INSERT INTO applied_migrations(version) VALUES(?)').run(m.version)
       db.exec('COMMIT')
       console.log(`[migrate] 应用迁移 v${m.version}`)
@@ -545,7 +664,7 @@ export function destroySession(token) {
   if (token) db.prepare('DELETE FROM sessions WHERE token=?').run(sessionTokenHash(token))
 }
 
-const AUDIT_REDACT = new Set(['password_hash', 'token', 'id_number', 'bank_account', 'social_security_no', 'housing_fund_no', 'mobile', 'phone', 'personal_email', 'email', 'resume_parsed', 'resume_path', 'file_path', 'filename', 'original_name', 'resume_name', 'parsed_data', 'text_preview'])
+const AUDIT_REDACT = new Set(['password_hash', 'token', 'id_number', 'bank_account', 'payment_account_number', 'contact_info', 'social_security_no', 'housing_fund_no', 'mobile', 'phone', 'personal_email', 'email', 'resume_parsed', 'profile_json', 'resume_path', 'file_path', 'filename', 'original_name', 'resume_name', 'parsed_data', 'text_preview'])
 function sanitizeAudit(value) {
   if (Array.isArray(value)) return value.map(sanitizeAudit)
   if (!value || typeof value !== 'object') return value

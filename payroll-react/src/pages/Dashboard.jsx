@@ -129,7 +129,7 @@ export default function Dashboard({ goto, backendUp, user, approvals }) {
               <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #2f54eb' }} onClick={() => goto('recruiting')}>
                 <div className="label">招聘管理</div>
                 <div className="num" style={{ fontSize: 18 }}>漏斗 · 周期 · 成本</div>
-                <div className="sub">候选人管线 / 需求 / 面试 / 渠道</div>
+                <div className="sub">简历库 / 需求 / 面试 / 渠道</div>
               </div>
               <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #dc2626' }} onClick={() => goto('cost')}>
                 <div className="label">薪酬成本</div>
@@ -137,7 +137,7 @@ export default function Dashboard({ goto, backendUp, user, approvals }) {
                 <div className="sub">成本总览 / 预算对比 / 预测</div>
               </div>
               <div className="card" style={{ margin: 0, cursor: 'pointer', borderLeft: '4px solid #7c3aed' }} onClick={() => goto('candidates')}>
-                <div className="label">候选人管线</div>
+                <div className="label">简历库</div>
                 <div className="num" style={{ fontSize: 18 }}>{people.pendingHires + (people.offers || 0)} 人在流程</div>
                 <div className="sub">待入职 {people.pendingHires} · 发 offer {people.offers}</div>
               </div>

@@ -100,7 +100,7 @@ core.post('/approvals/:id/action', auth(OPS_ROLES), (req, res) => {
     const changed = db.prepare("UPDATE approvals SET status=?, key=COALESCE(?, key), action_by=?, action_at=?, comment=COALESCE(?, comment), payload_json=? WHERE id=? AND status='pending'")
       .run(status, key || null, req.user.name, now, comment || null, payloadJson, req.params.id)
     if (!changed.changes) throw Object.assign(new Error('审批已被处理'), { statusCode: 409 })
-    if (status === 'approved') applied = applyApproval({ ...a, payload_json: payloadJson }, payload)
+    if (status === 'approved') applied = applyApproval({ ...a, action_by: req.user.name, payload_json: payloadJson }, payload)
     else if (a.type === 'offer' && a.ref_type === 'candidate') db.prepare("UPDATE candidates SET offer_status='rejected' WHERE id=?").run(a.ref_id)
     audit(req.user, action, 'approval', a.id, a, { ...a, status, comment: comment || a.comment, applied })
   })

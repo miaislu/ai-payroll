@@ -168,7 +168,7 @@ export default function Settings({ toast, backendUp, user }) {
               <Field label="关联员工">
                 <select value={form.employee_id} onChange={e => setForm({ ...form, employee_id: e.target.value })}>
                   <option value="">（无）</option>
-                  {emps.map(e => <option key={e.id} value={e.id}>{e.name} · {e.grade}</option>)}
+                  {emps.map(e => <option key={e.id} value={e.id}>{e.name} · {e.job_family}</option>)}
                 </select>
               </Field>
             </div>

@@ -34,7 +34,7 @@ export default function Payslip({ goto, backendUp, user, toast }) {
         <div className="payslip-head">
           <div className="avatar">{(emp.name || '?').slice(0, 1)}</div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>{emp.name} · {emp.job_family}（{emp.grade}）</div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{emp.name} · {emp.job_family}</div>
             <div style={{ color: 'var(--muted)', fontSize: 12 }}>{data?.period || '—'} · 仅自己可见 · <Chip kind={status[0]}>{status[1]}</Chip>{data.live && <span className="chip warn" style={{ marginLeft: 6 }}>实时预览，非付款凭证</span>}</div>
           </div>
         </div>

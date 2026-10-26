@@ -29,8 +29,8 @@ export const Kpi = ({ label, num, sub, numColor }) => (
   </div>
 )
 
-export const Field = ({ label, children }) => (
-  <label className="f">{label}{children}</label>
+export const Field = ({ label, children, style }) => (
+  <label className="f" style={style}>{label}{children}</label>
 )
 
 export function Modal({ onClose, children }) {

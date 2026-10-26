@@ -66,7 +66,7 @@ export default function Attendance({ toast, backendUp, user }) {
           <tbody>
             {rows.map((r, i) => (
               <tr key={r.employee_id}>
-                <td><b>{r.name}</b><div className="hint">{r.grade} · {r.job_family}</div></td>
+                <td><b>{r.name}</b><div className="hint">{r.job_family}</div></td>
                 <td>{isAdmin ? <input type="number" min={0} max={31} value={r.work_days} onChange={e => set(i, 'work_days', e.target.value)} style={{ width: 64 }} /> : r.work_days}</td>
                 <td>{isAdmin ? <input type="number" min={0.1} max={31} value={r.scheduled_work_days} onChange={e => set(i, 'scheduled_work_days', e.target.value)} style={{ width: 64 }} /> : r.scheduled_work_days}</td>
                 <td>{isAdmin ? <input type="number" min={0} value={r.ot_weekday_hours} onChange={e => set(i, 'ot_weekday_hours', e.target.value)} style={{ width: 64 }} /> : r.ot_weekday_hours}</td>
