@@ -30,6 +30,8 @@ __pycache__/
 **/backups/
 **/private-tools/
 job-catalog.json
+feishu-config.json
+feishu-config.json.*
 *.sqlite
 *.sqlite3
 *.sqlite-wal

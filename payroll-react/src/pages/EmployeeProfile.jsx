@@ -139,16 +139,17 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
 
   // ── 简历与 AI 解析 ──
   const onPickFile = async ev => {
-    const file = ev.target.files?.[0]
+    const files = [...(ev.target.files || [])]
     ev.target.value = ''
-    if (!file) return
-    if (file.size > 10 * 1024 * 1024) return toast('文件超过 10MB')
+    if (!files.length) return
+    if (files.length > 10) return toast('每次最多上传 10 个文件')
+    if (files.some(file => file.size > 10 * 1024 * 1024)) return toast('每个文件不能超过 10MB')
     setUploading(true)
     try {
-      await uploadResume(empId, file)
-      toast('简历已上传：' + file.name)
+      await uploadResume(empId, files)
+      toast(`已保存 ${files.length} 份简历附件`)
       load()
-    } catch { toast('上传失败（支持 txt/md/docx/pdf/xlsx/xls，≤10MB）') } finally { setUploading(false) }
+    } catch (error) { toast('上传失败：' + error.message) } finally { setUploading(false) }
   }
   const doParse = async (rid, mode = 'rules') => {
     if (parsing) return
@@ -295,7 +296,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
         <div className="toolbar">
           <Hint>支持 txt/md/docx/pdf/xlsx/xls，≤10MB。上传简历 → 选择提取方式 → 核对结果 → 确认应用到档案。</Hint>
           <div style={{ flex: 1 }} />
-          <input ref={fileRef} type="file" accept=".txt,.md,.text,.docx,.pdf,.xlsx,.xls" style={{ display: 'none' }} onChange={onPickFile} />
+          <input ref={fileRef} type="file" multiple accept=".txt,.md,.text,.docx,.pdf,.xlsx,.xls" style={{ display: 'none' }} onChange={onPickFile} />
           <Btn primary disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? '上传中…' : '📄 上传简历'}</Btn>
         </div>
         {resumes.length ? (
@@ -409,6 +410,7 @@ export default function EmployeeProfile({ empId, goto, toast, backendUp }) {
       )}
 
       {parseTarget && <ResumeParsingDialog filename={parseTarget.original_name || parseTarget.filename}
+        files={resumes} selectedId={parseTarget.id} onSelectFile={id => setParseTarget(resumes.find(file => file.id === id))}
         busy={Boolean(parsing)} onClose={() => setParseTarget(null)} onBasicParse={() => doParse(parseTarget.id, 'rules')} onModelParse={() => doParse(parseTarget.id, 'local_model')} />}
 
       {/* 简历解析结果预览 */}

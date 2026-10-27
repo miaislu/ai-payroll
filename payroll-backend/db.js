@@ -5,6 +5,7 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypt
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { repairLegacyResumeNames } from './lib/uploads.js'
+import { migrateCandidateResumes } from './lib/candidate_resumes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 process.umask(0o077)
@@ -606,6 +607,48 @@ const MIGRATIONS = [
             before_json TEXT NOT NULL, after_json TEXT NOT NULL, actor_user_id INTEGER, created_at TEXT NOT NULL
           );`,
     run: connection => repairLegacyResumeNames(connection)
+  },
+  {
+    version: 29,
+    sql: `CREATE TABLE candidate_resumes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL, original_name TEXT NOT NULL, file_path TEXT NOT NULL, content_type TEXT,
+            size INTEGER NOT NULL DEFAULT 0, uploaded_at TEXT NOT NULL, parse_status TEXT NOT NULL DEFAULT 'pending',
+            parse_engine TEXT, parsed_data TEXT
+          );
+          CREATE INDEX idx_candidate_resumes_candidate ON candidate_resumes(candidate_id,id);
+          ALTER TABLE candidates ADD COLUMN resume_source_id INTEGER;
+          ALTER TABLE candidates ADD COLUMN resume_applied_id INTEGER;`,
+    run: connection => migrateCandidateResumes(connection)
+  },
+  {
+    version: 30,
+    sql: `CREATE TABLE feishu_candidate_keys(
+            candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+            source_key TEXT NOT NULL UNIQUE
+          );
+          CREATE TABLE feishu_sync_records(
+            target_key TEXT NOT NULL, source_key TEXT NOT NULL,
+            record_id TEXT, create_token TEXT NOT NULL, pending_hash TEXT, pending_time TEXT, synced_at TEXT,
+            PRIMARY KEY(target_key,source_key)
+          );
+          CREATE TABLE feishu_sync_files(
+            app_token TEXT NOT NULL, content_hash TEXT NOT NULL, original_name TEXT NOT NULL,
+            file_token TEXT NOT NULL, PRIMARY KEY(app_token,content_hash,original_name)
+          );`
+  },
+  {
+    version: 31,
+    sql: 'ALTER TABLE candidates ADD COLUMN expected_salary_annual INTEGER CHECK(expected_salary_annual IS NULL OR (typeof(expected_salary_annual)=\'integer\' AND expected_salary_annual>=0));'
+  },
+  {
+    version: 32,
+    sql: `CREATE TABLE candidate_deleted_records(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id INTEGER NOT NULL,
+      name TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+      deleted_at TEXT NOT NULL, deleted_by TEXT NOT NULL,
+      restored_at TEXT, restored_by TEXT
+    );`
   }
 ]
 export function migrate() {

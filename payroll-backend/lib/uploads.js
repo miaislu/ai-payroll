@@ -45,3 +45,8 @@ export function validateResumeFile(file) {
   if (['.txt', '.text', '.md'].includes(ext) && head.includes(0)) return false
   return true
 }
+
+export function validateResumeBatch(files) {
+  if (!Array.isArray(files) || !files.length || files.length > 10) throw Object.assign(new Error('每次请选择 1–10 个简历文件'), { statusCode: 400 })
+  for (const file of files) if (!validateResumeFile(file)) throw Object.assign(new Error(`文件内容与扩展名不匹配：${file.originalname}`), { statusCode: 400 })
+}

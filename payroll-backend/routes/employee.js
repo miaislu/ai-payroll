@@ -9,7 +9,7 @@ import { extractText, parseResume } from '../lib/resume_parser.js'
 import { normalizeResumeProfile, resumeResultToken } from '../lib/resume_profile.js'
 import { employeeResumeSnapshot, writeEmployeeResumeProfile } from '../lib/employee_resume_apply.js'
 import { randomUUID } from 'node:crypto'
-import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
+import { resumeFileFilter, validateResumeBatch } from '../lib/uploads.js'
 import { isDate } from '../lib/periods.js'
 
 export const employee = Router()
@@ -174,16 +174,21 @@ employee.delete('/family/:fid', (req, res) => {
 employee.post('/:id/resume', (req, res, next) => {
   if (!db.prepare('SELECT id FROM employees WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '员工不存在' })
   next()
-}, upload.single('resume'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '缺少简历文件（字段名 resume）' })
-  if (!validateResumeFile(req.file)) {
-    try { rmSync(req.file.path, { force: true }) } catch { /* ignore */ }
-    return res.status(400).json({ error: '文件内容与扩展名不匹配' })
+}, upload.array('resume', 10), (req, res) => {
+  const files = req.files || []
+  try {
+    validateResumeBatch(files)
+    const saved = inTransaction(() => files.map(file => {
+      const r = db.prepare('INSERT INTO employee_resumes(employee_id,filename,original_name,content_type,size,file_path,uploaded_at,parse_status) VALUES(?,?,?,?,?,?,?,?)')
+        .run(req.params.id, file.filename, file.originalname, file.mimetype, file.size, file.path, new Date().toISOString(), 'pending')
+      audit(req.user, 'upload', 'employee_resume', r.lastInsertRowid, null, { employee_id: Number(req.params.id), filename: file.originalname, size: file.size })
+      return { id: Number(r.lastInsertRowid), filename: file.originalname }
+    }))
+    res.json({ ok: true, id: saved[0].id, filename: saved[0].filename, resumes: saved })
+  } catch (error) {
+    for (const file of files) try { rmSync(file.path, { force: true }) } catch { /* cleanup */ }
+    throw error
   }
-  const r = db.prepare('INSERT INTO employee_resumes(employee_id,filename,original_name,content_type,size,file_path,uploaded_at,parse_status) VALUES(?,?,?,?,?,?,?,?)')
-    .run(req.params.id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.file.path, new Date().toISOString().slice(0, 19).replace('T', ' '), 'pending')
-  audit(req.user, 'upload', 'employee_resume', r.lastInsertRowid, null, { employee_id: Number(req.params.id), filename: req.file.originalname, size: req.file.size })
-  res.json({ ok: true, id: r.lastInsertRowid, filename: req.file.originalname })
 })
 
 // 简历列表

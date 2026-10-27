@@ -62,6 +62,7 @@ mkdir -p -m 700 "$RELEASE_DIR/backend" "$RELEASE_DIR/frontend"
 rsync -a \
   --exclude node_modules \
   --exclude .env \
+  --exclude 'feishu-config.json*' \
   --exclude 'payroll.db*' \
   --exclude uploads \
   "$SOURCE_BACKEND/" "$RELEASE_DIR/backend/"
@@ -84,6 +85,7 @@ PORT=3001
 DB_PATH=$DB_PATH
 UPLOAD_DIR=$UPLOAD_DIR
 JOB_CATALOG_FILE=$DATA_DIR/job-catalog.json
+FEISHU_CONFIG_FILE=$DATA_DIR/feishu-config.json
 COOKIE_SECURE=0
 CORS_ORIGINS=http://127.0.0.1:3001,http://localhost:3001
 SERVE_FRONTEND=true
@@ -143,6 +145,15 @@ fi
 launchctl bootout "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null 2>&1 || true
 launchctl bootout "$LAUNCH_DOMAIN/$BACKUP_LABEL" >/dev/null 2>&1 || true
 launchctl bootout "$LAUNCH_DOMAIN/$MODEL_LABEL" >/dev/null 2>&1 || true
+# An orphaned old process can survive a removed launchd job. Never serve a new
+# frontend over that old backend, or mistake its health response for this release.
+for _ in {1..40}; do
+  if ! lsof -nP -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
+  sleep 0.2
+done
+if lsof -nP -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+  fail "旧服务或其他程序仍占用 3001 端口，未切换版本。请先检查该进程后重试。"
+fi
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 if grep -q '^RESUME_LOCAL_LLM=true$' "$RELEASE_DIR/backend/.env"; then
   launchctl bootstrap "$LAUNCH_DOMAIN" "$MODEL_PLIST"
@@ -218,15 +229,29 @@ launchctl kickstart -k "$LAUNCH_DOMAIN/$APP_LABEL"
 
 HEALTH_OK=0
 for _ in {1..30}; do
-  if curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then HEALTH_OK=1; break; fi
+  if curl -fsS http://127.0.0.1:3001/api/health | "$NODE_BIN" -e '
+    let body = ""; process.stdin.on("data", chunk => body += chunk);
+    process.stdin.on("end", () => { try { const health = JSON.parse(body); process.exit(health.ok === true && health.release_id === process.argv[1] ? 0 : 1) } catch { process.exit(1) } });
+  ' "$STAMP" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
   sleep 1
 done
-[ "$HEALTH_OK" -eq 1 ] || fail "服务未能启动，请查看 $LOG_DIR/app-error.log"
+[ "$HEALTH_OK" -eq 1 ] || fail "目标版本未能启动或端口仍由其他版本占用，请查看 $LOG_DIR/app-error.log"
 
 echo "[install] 创建并验证首次备份…"
 APP_LABEL="$APP_LABEL" APP_PLIST="$APP_PLIST" DATA_DIR="$DATA_DIR" DB_PATH="$DB_PATH" \
   UPLOAD_DIR="$UPLOAD_DIR" BACKUP_DIR="$BACKUP_DIR" \
   "$CURRENT_LINK/backend/deploy/backup-macos.sh"
+
+# The post-install backup stops and restarts the service. Verify that restart too.
+HEALTH_OK=0
+for _ in {1..30}; do
+  if curl -fsS http://127.0.0.1:3001/api/health | "$NODE_BIN" -e '
+    let body = ""; process.stdin.on("data", chunk => body += chunk);
+    process.stdin.on("end", () => { try { const health = JSON.parse(body); process.exit(health.ok === true && health.release_id === process.argv[1] ? 0 : 1) } catch { process.exit(1) } });
+  ' "$STAMP" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
+  sleep 1
+done
+[ "$HEALTH_OK" -eq 1 ] || fail "备份后的目标版本重启未通过校验，请查看 $LOG_DIR/app-error.log"
 
 cat > "$APP_ROOT/打开HR系统.command" <<EOF
 #!/bin/bash

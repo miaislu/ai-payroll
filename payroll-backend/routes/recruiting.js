@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url'
 import { bandOf, bandPosition } from './cost.js'
 import { extractText, parseResume } from '../lib/resume_parser.js'
 import { localResumeStatus } from '../lib/local_resume_model.js'
-import { candidatePersonalProfile, mergePersonalProfile, normalizeResumeProfile, resumeResultToken, readProfile } from '../lib/resume_profile.js'
+import { candidatePersonalProfile, mergePersonalProfile, normalizeResumeProfile, readProfile } from '../lib/resume_profile.js'
 import { availableRequisitions, matchRequisitions, validateRequisitionChange } from '../lib/requisition_matching.js'
-import { resumeFileFilter, validateResumeFile } from '../lib/uploads.js'
+import { resumeFileFilter, validateResumeBatch } from '../lib/uploads.js'
+import { candidateResumeRows, candidateResumeToken, candidateSourceToken, resumeMetadata, resolveCandidateResume, insertCandidateResume, selectCandidateResume } from '../lib/candidate_resumes.js'
 import { categoryOf, JOB_FAMILIES } from '../lib/validators.js'
 import { JOB_CATALOG } from '../lib/job_catalog.js'
 import { isDate, isPeriod } from '../lib/periods.js'
@@ -20,6 +21,8 @@ import { buildOfferApprovalContext } from '../lib/approvals.js'
 import { formatRequisitionPosting } from '../lib/requisition_export.js'
 import { monthlyInterviewStats, shanghaiToday } from '../lib/interview_stats.js'
 import { EXPECTED_SALARY_RANGES, expectedSalaryLabel, exactExpectedSalary } from '../lib/candidate_salary.js'
+import { normalizeAnnualSalary } from '../lib/candidate_annual_salary.js'
+import { archiveCandidate, restoreCandidate } from '../lib/candidate_deleted_records.js'
 import { CANDIDATE_STAGES, STAGE_LABELS, INTERVIEW_STATUSES, candidateEvent, changeCandidateStage,
   recordInterviewEvent, syncInterviewStage, candidateForEmployee, linkCandidateEmployee } from '../lib/candidate_workflow.js'
 
@@ -56,9 +59,10 @@ function recordRequisitionLink(candidate, requisitionId, user) {
 function candidateDetails(rows) {
   const interviews = db.prepare('SELECT * FROM interviews ORDER BY interview_date,round_no,id').all()
   const events = db.prepare('SELECT id,candidate_id,type,from_stage,to_stage,round_no,interview_id,note,actor,occurred_at FROM candidate_events ORDER BY occurred_at,id').all()
-  const groupedInterviews = {}, groupedEvents = {}
+  const groupedInterviews = {}, groupedEvents = {}, groupedResumes = {}
   for (const item of interviews) (groupedInterviews[item.candidate_id] ||= []).push(item)
   for (const item of events) (groupedEvents[item.candidate_id] ||= []).push(item)
+  for (const item of db.prepare('SELECT * FROM candidate_resumes ORDER BY id DESC').all()) (groupedResumes[item.candidate_id] ||= []).push(resumeMetadata(item))
   return rows.map(row => {
     const rounds = groupedInterviews[row.id] || []
     const active = rounds.find(item => item.status === 'in_progress')
@@ -66,8 +70,8 @@ function candidateDetails(rows) {
       ? active?.round_no || Math.max(row.current_round || 1, ...rounds.filter(item => item.status === 'completed').map(item => item.round_no))
       : row.current_round
     return { ...row, current_round: currentRound, interviews: rounds, timeline: groupedEvents[row.id] || [],
-      personal_profile: candidatePersonalProfile(row), resume_result_token: resumeResultToken(row.resume_parsed),
-      resume_pending: Boolean(row.resume_parsed && resumeResultToken(row.resume_parsed) !== row.resume_applied_hash) }
+      personal_profile: candidatePersonalProfile(row), resumes: groupedResumes[row.id] || [], resume_result_token: candidateSourceToken(row),
+      resume_pending: Boolean(row.resume_parsed && candidateSourceToken(row) !== row.resume_applied_hash) }
   })
 }
 function insertCandidate(body, user) {
@@ -80,11 +84,13 @@ function insertCandidate(body, user) {
   if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(body.email))) fail('邮箱格式不合法')
   const channel = body.source_channel_id ? db.prepare('SELECT id,name FROM recruiting_channels WHERE id=?').get(body.source_channel_id) : null
   if (body.source_channel_id && !channel) fail('来源渠道不存在')
+  const annualSalary = normalizeAnnualSalary(body.expected_salary_annual)
   const result = db.prepare(`INSERT INTO candidates(name,phone,email,source_channel,source_channel_id,requisition_id,stage,apply_date,expected_salary,expected_salary_range,created_at)
     VALUES(?,?,?,?,?,?,'new',?,?,?,?)`).run(String(body.name).trim().slice(0, 80), String(body.phone || '').slice(0, 40),
     String(body.email || '').slice(0, 160), channel?.name || String(body.source_channel || '其他').slice(0, 120), channel?.id || null,
     body.requisition_id || null, body.apply_date || shanghaiToday(), body.expected_salary == null || body.expected_salary === '' ? null : Number(body.expected_salary), body.expected_salary_range ?? null, new Date().toISOString())
   const id = Number(result.lastInsertRowid)
+  if (annualSalary != null) db.prepare('UPDATE candidates SET expected_salary_annual=? WHERE id=?').run(annualSalary, id)
   candidateEvent(id, user, 'created', { to_stage: 'new', note: body.resume_import ? '上传简历建档' : '手动录入建档' })
   audit(user, 'create', 'candidate', id, null, { name: body.name, stage: 'new' })
   return id
@@ -270,11 +276,14 @@ recruiting.post('/candidates', (req, res) => {
   res.json({ ok: true, id })
 })
 
-recruiting.post('/candidates/from-resume', candUpload.single('resume'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '请选择简历文件' })
+recruiting.post('/candidates/from-resume', candUpload.array('resume', 10), async (req, res) => {
+  const files = req.files || []
   try {
-    if (!validateResumeFile(req.file)) throw Object.assign(new Error('文件内容与扩展名不匹配'), { statusCode: 400 })
-    const extracted = await extractText(req.file.path, req.file.mimetype, req.file.originalname)
+    validateResumeBatch(files)
+    const primary = req.body?.primary_index == null ? 0 : Number(req.body.primary_index)
+    if (!Number.isInteger(primary) || primary < 0 || primary >= files.length) throw Object.assign(new Error('请选择有效的建档提取文件'), { statusCode: 400 })
+    const file = files[primary]
+    const extracted = await extractText(file.path, file.mimetype, file.originalname)
     let parsed = null
     let warning = extracted.error || ''
     if (extracted.text?.trim()) parsed = await parseResume(extracted.text, { allowExternal: false })
@@ -282,18 +291,18 @@ recruiting.post('/candidates/from-resume', candUpload.single('resume'), async (r
     const basic = parsed?.basic || {}
     const b = req.body || {}
     const localPhone = extracted.text?.match(/(?:\+?86[-\s]?)?(1[3-9]\d{9})/)?.[1]
-    const name = b.name?.trim() || basic.name || `待补充姓名 · ${path.basename(req.file.originalname, path.extname(req.file.originalname))}`
+    const name = b.name?.trim() || basic.name || `待补充姓名 · ${path.basename(file.originalname, path.extname(file.originalname))}`
+    let saved
     const id = inTransaction(() => {
       const id = insertCandidate({ ...b, name, phone: b.phone || localPhone || basic.mobile || '', email: b.email || basic.personal_email || '', resume_import: true }, req.user)
-      db.prepare('UPDATE candidates SET resume_name=?,resume_path=?,resume_parsed=?,skills=?,tags=?,experience_years=? WHERE id=?')
-        .run(req.file.originalname, req.file.path, parsed ? JSON.stringify(parsed) : null, basic.skills || null,
-          parsed ? JSON.stringify(parsed.tags || []) : null, parsed?.experience_years ?? null, id)
-      candidateEvent(id, req.user, 'resume_uploaded', { note: '已保存上传的简历' })
+      saved = files.map((item, index) => insertCandidateResume(db, id, item, index === primary ? parsed : null))
+      selectCandidateResume(db, id, saved[primary])
+      candidateEvent(id, req.user, 'resume_uploaded', { note: `已保存 ${saved.length} 份简历附件` })
       return id
     })
-    res.json({ ok: true, id, warning })
+    res.json({ ok: true, id, warning, resumes: saved.map(resumeMetadata), source_resume_id: saved[primary].id })
   } catch (error) {
-    rmSync(req.file.path, { force: true })
+    for (const file of files) try { rmSync(file.path, { force: true }) } catch { /* cleanup */ }
     throw error
   }
 })
@@ -305,6 +314,7 @@ recruiting.put('/candidates/:id', (req, res) => {
   const personalProfile = b.personal_profile ? normalizeResumeProfile(b.personal_profile) : candidatePersonalProfile(current)
   const offerChanged = b.offer_amount !== undefined && Number(b.offer_amount) !== Number(current.offer_amount)
   const next = { ...current }
+  if (b.expected_salary_annual !== undefined) next.expected_salary_annual = normalizeAnnualSalary(b.expected_salary_annual)
   if (b.personal_profile) {
     next.name = personalProfile.basic.name
     next.phone = personalProfile.basic.mobile
@@ -332,6 +342,7 @@ recruiting.put('/candidates/:id', (req, res) => {
       WHERE id=?`)
       .run(next.name, next.phone, next.email, next.source_channel, next.source_channel_id, next.requisition_id, next.apply_date, next.expected_salary, next.expected_salary_range, next.offer_amount, next.offer_date, next.onboard_date, next.eval_score, next.reject_reason, offerChanged ? 1 : 0, req.params.id)
     if (offerChanged) db.prepare("UPDATE approvals SET status='cancelled', comment=COALESCE(comment,'Offer 金额变更，审批自动失效') WHERE ref_type='candidate' AND ref_id=? AND type='offer' AND status='pending'").run(req.params.id)
+    if (b.expected_salary_annual !== undefined) db.prepare('UPDATE candidates SET expected_salary_annual=? WHERE id=?').run(next.expected_salary_annual, current.id)
     if (offerChanged && current.stage === 'accepted') changeCandidateStage(current.id, 'offer', req.user, { note: 'Offer 薪资变更，需重新审批与确认录用' })
     candidateEvent(current.id, req.user, 'profile_updated', { note: offerChanged ? '更新 Offer 薪资' : '更新人选资料' })
     recordRequisitionLink(current, next.requisition_id, req.user)
@@ -348,14 +359,25 @@ recruiting.delete('/candidates/:id', (req, res) => {
   if (candidate.employee_id) return res.status(409).json({ error: '已入职候选人不可删除，请保留招聘审计链路' })
   if (db.prepare('SELECT 1 FROM approvals WHERE ref_type=\'candidate\' AND ref_id=? LIMIT 1').get(req.params.id)) return res.status(409).json({ error: '已有审批记录的候选人不可物理删除' })
   if (db.prepare('SELECT 1 FROM channel_expenses WHERE candidate_id=? LIMIT 1').get(req.params.id)) return res.status(409).json({ error: '该候选人已有猎头费用记录，不可删除' })
-  inTransaction(() => {
-    db.prepare('DELETE FROM interviews WHERE candidate_id=?').run(req.params.id)
-    db.prepare('DELETE FROM candidate_events WHERE candidate_id=?').run(req.params.id)
-    db.prepare('DELETE FROM candidates WHERE id=?').run(req.params.id)
-    audit(req.user, 'delete', 'candidate', req.params.id, candidate, null)
+  const archiveId = inTransaction(() => {
+    const id = archiveCandidate(db, candidate, req.user.name)
+    audit(req.user, 'archive', 'candidate', req.params.id, candidate, { archive_id: id })
+    return id
   })
-  if (candidate.resume_path) { try { rmSync(candidate.resume_path, { force: true }) } catch { /* ignore */ } }
-  res.json({ ok: true })
+  res.json({ ok: true, archive_id: archiveId, recoverable: true })
+})
+
+recruiting.get('/candidates/deleted', (req, res) => {
+  res.json(db.prepare('SELECT id,candidate_id,name,deleted_at,deleted_by FROM candidate_deleted_records WHERE restored_at IS NULL ORDER BY id DESC').all())
+})
+
+recruiting.post('/candidates/deleted/:archiveId/restore', (req, res) => {
+  const id = inTransaction(() => {
+    const id = restoreCandidate(db, Number(req.params.archiveId), req.user.name)
+    audit(req.user, 'restore', 'candidate', id, null, { archive_id: Number(req.params.archiveId) })
+    return id
+  })
+  res.json({ ok: true, id })
 })
 
 // 阶段流转（Kanban 拖拽）
@@ -665,27 +687,47 @@ recruiting.get('/stats', (req, res) => {
 recruiting.post('/candidates/:id/resume', (req, res, next) => {
   if (!db.prepare('SELECT id FROM candidates WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '候选人不存在' })
   next()
-}, candUpload.single('resume'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '缺少简历文件（字段名 resume）' })
-  if (!validateResumeFile(req.file)) {
-    try { rmSync(req.file.path, { force: true }) } catch { /* ignore */ }
-    return res.status(400).json({ error: '文件内容与扩展名不匹配' })
+}, candUpload.array('resume', 10), (req, res) => {
+  const files = req.files || []
+  try {
+    validateResumeBatch(files)
+    const c = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
+    if (!c) throw Object.assign(new Error('候选人不存在'), { statusCode: 404 })
+    let saved
+    inTransaction(() => {
+      saved = files.map(file => insertCandidateResume(db, c.id, file))
+      if (!c.resume_source_id) selectCandidateResume(db, c.id, saved[0])
+      audit(req.user, 'upload', 'candidate_resume', c.id, null, { count: saved.length })
+      candidateEvent(c.id, req.user, 'resume_uploaded', { note: `新增 ${saved.length} 份简历附件，保留原有文件` })
+    })
+    res.json({ ok: true, id: c.id, filename: saved[0].original_name, resumes: saved.map(resumeMetadata) })
+  } catch (error) {
+    for (const file of files) try { rmSync(file.path, { force: true }) } catch { /* cleanup */ }
+    throw error
   }
-  const c = db.prepare('SELECT id, resume_path, resume_name FROM candidates WHERE id=?').get(req.params.id)
-  if (!c) return res.status(404).json({ error: '候选人不存在' })
-  if (c.resume_path) { try { rmSync(c.resume_path, { force: true }) } catch { /* 忽略 */ } }
-  db.prepare("UPDATE candidates SET resume_name=?, resume_path=?, resume_parsed=NULL, skills=NULL, tags=NULL, experience_years=NULL WHERE id=?")
-    .run(req.file.originalname, req.file.path, req.params.id)
-  audit(req.user, 'upload', 'candidate_resume', req.params.id, { filename: c.resume_name, had_resume: Boolean(c.resume_path) }, { filename: req.file.originalname, size: req.file.size })
-  candidateEvent(Number(req.params.id), req.user, 'resume_uploaded', { note: '上传或更新简历附件' })
-  res.json({ ok: true, id: Number(req.params.id), filename: req.file.originalname })
+})
+
+recruiting.get('/candidates/:id/resumes', (req, res) => {
+  if (!db.prepare('SELECT id FROM candidates WHERE id=?').get(req.params.id)) return res.status(404).json({ error: '候选人不存在' })
+  res.json(candidateResumeRows(db, req.params.id).map(resumeMetadata))
+})
+
+recruiting.get('/candidates/:id/resumes/:rid/result', (req, res) => {
+  const row = resolveCandidateResume(db, { id: Number(req.params.id) }, req.params.rid)
+  if (!row.parsed_data) return res.status(400).json({ error: '此文件尚未解析' })
+  res.json({ ...resumeMetadata(row), resume_id: row.id, filename: row.original_name, parsed: JSON.parse(row.parsed_data), engine: row.parse_engine })
+})
+
+recruiting.get('/candidates/:id/resumes/:rid/file', (req, res) => {
+  const row = resolveCandidateResume(db, { id: Number(req.params.id) }, req.params.rid)
+  res.download(row.file_path, row.original_name)
 })
 
 recruiting.post('/candidates/:id/resume/parse', async (req, res) => {
   const c = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
   if (!c) return res.status(404).json({ error: '候选人不存在' })
-  if (!c.resume_path) return res.status(400).json({ error: '请先上传简历' })
-  const { text, unsupported, error } = await extractText(c.resume_path, '', c.resume_name)
+  const file = resolveCandidateResume(db, c, req.body?.resume_id, { explicitWhenMultiple: true })
+  const { text, unsupported, error } = await extractText(file.file_path, file.content_type, file.original_name)
   if (unsupported) return res.status(400).json({ error: '暂不支持该文件类型（支持 txt/md/docx/pdf/xlsx/xls）' })
   if (!text.trim()) return res.status(400).json({ error: '未能从文件中提取文本' + (error ? '：' + error : '') })
   const parsed = await parseResume(text, {
@@ -693,19 +735,21 @@ recruiting.post('/candidates/:id/resume/parse', async (req, res) => {
     allowExternal: req.body?.allow_external === true,
     onExternal: meta => audit(req.user, 'external_llm_request', 'candidate_resume', c.id, null, meta)
   })
-  const b = parsed.basic || {}
-  const skills = b.skills || (parsed.tags || []).join(',') || null
-  db.prepare('UPDATE candidates SET resume_parsed=?, skills=?, tags=?, experience_years=? WHERE id=?')
-    .run(JSON.stringify(parsed), skills, JSON.stringify(parsed.tags || []), parsed.experience_years ?? null, req.params.id)
-  audit(req.user, 'parse', 'candidate_resume', c.id, null, { engine: parsed.engine })
-  candidateEvent(c.id, req.user, 'resume_parsed', { note: '完成简历解析' })
-  res.json({ ok: true, id: Number(req.params.id), engine: parsed.engine, parsed, result_token: resumeResultToken(JSON.stringify(parsed)) })
+  inTransaction(() => {
+    if (!db.prepare('SELECT id FROM candidate_resumes WHERE id=? AND candidate_id=?').get(file.id, c.id)) throw Object.assign(new Error('解析期间此文件已被移除，请重新选择文件'), { statusCode: 409 })
+    db.prepare("UPDATE candidate_resumes SET parsed_data=?,parse_status='parsed',parse_engine=? WHERE id=?").run(JSON.stringify(parsed), parsed.engine, file.id)
+    selectCandidateResume(db, c.id, { ...file, parsed_data: JSON.stringify(parsed) })
+    audit(req.user, 'parse', 'candidate_resume', file.id, null, { engine: parsed.engine, candidate_id: c.id })
+    candidateEvent(c.id, req.user, 'resume_parsed', { note: `完成简历解析：${file.original_name}` })
+  })
+  res.json({ ok: true, id: c.id, resume_id: file.id, filename: file.original_name, engine: parsed.engine, parsed,
+    result_token: candidateResumeToken({ ...file, parsed_data: JSON.stringify(parsed) }) })
 })
 
 recruiting.post('/candidates/:id/requisition-match', async (req, res) => {
   const current = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
   if (!current) return res.status(404).json({ error: '候选人不存在' })
-  const source = req.body?.personal_profile || (current.resume_applied_hash === resumeResultToken(current.resume_parsed)
+  const source = req.body?.personal_profile || (current.resume_applied_hash === candidateSourceToken(current)
     ? candidatePersonalProfile(current) : mergePersonalProfile(candidatePersonalProfile(current), { basic: {}, education: [], work_experience: [], ...readProfile(current.resume_parsed) }))
   const result = await matchRequisitions(source, availableRequisitions(db))
   res.setHeader('Cache-Control', 'no-store')
@@ -715,38 +759,50 @@ recruiting.post('/candidates/:id/requisition-match', async (req, res) => {
 recruiting.post('/candidates/:id/resume/apply', (req, res) => {
   const current = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
   if (!current) return res.status(404).json({ error: '候选人不存在' })
-  if (!current.resume_parsed) return res.status(400).json({ error: '请先解析简历' })
-  const token = resumeResultToken(current.resume_parsed)
+  const file = resolveCandidateResume(db, current, req.body?.resume_id)
+  if (!file.parsed_data) return res.status(400).json({ error: '请先解析所选简历文件' })
+  const token = candidateResumeToken(file)
   if (req.body?.result_token !== token) return res.status(409).json({ error: '简历结果已变化，请重新打开最新结果后再保存' })
-  const input = normalizeResumeProfile(req.body?.personal_profile || JSON.parse(current.resume_parsed))
+  const input = normalizeResumeProfile(req.body?.personal_profile || JSON.parse(file.parsed_data))
   const profile = mergePersonalProfile(candidatePersonalProfile(current), input)
   if (!profile.basic.name) return res.status(400).json({ error: '请填写姓名' })
   const requisitionId = validateRequisitionChange(db, current, req.body?.requisition_id)
   inTransaction(() => {
     db.prepare('UPDATE candidates SET name=?,phone=?,email=?,skills=?,profile_json=?,resume_applied_hash=?,requisition_id=? WHERE id=?')
       .run(profile.basic.name, profile.basic.mobile || '', profile.basic.personal_email || '', profile.basic.skills || '', JSON.stringify(profile), token, requisitionId, current.id)
+    selectCandidateResume(db, current.id, file)
+    db.prepare('UPDATE candidates SET resume_applied_id=?,skills=? WHERE id=?').run(file.id, profile.basic.skills || '', current.id)
+    db.prepare("UPDATE candidate_resumes SET parse_status='applied' WHERE id=?").run(file.id)
     recordRequisitionLink(current, requisitionId, req.user)
-    candidateEvent(current.id, req.user, 'resume_applied', { note: `已更新个人信息、${profile.education.length} 段教育经历、${profile.work_experience.length} 段工作经历` })
+    candidateEvent(current.id, req.user, 'resume_applied', { note: `由 ${file.original_name} 更新个人信息、${profile.education.length} 段教育经历、${profile.work_experience.length} 段工作经历` })
     audit(req.user, 'apply', 'candidate_resume', current.id, null, { basic: Object.values(input.basic).filter(Boolean).length, education: input.education.length, work_experience: input.work_experience.length })
   })
   res.json({ ok: true, personal_profile: profile })
 })
 
 recruiting.get('/candidates/:id/resume', (req, res) => {
-  const c = db.prepare('SELECT resume_path, resume_name FROM candidates WHERE id=?').get(req.params.id)
-  if (!c || !c.resume_path) return res.status(404).json({ error: '该候选人未上传简历' })
-  res.download(c.resume_path, c.resume_name)
+  const c = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
+  if (!c) return res.status(404).json({ error: '候选人不存在' })
+  const file = resolveCandidateResume(db, c, req.query.resume_id)
+  res.download(file.file_path, file.original_name)
 })
 
-recruiting.delete('/candidates/:id/resume', (req, res) => {
-  const c = db.prepare('SELECT resume_path, resume_name FROM candidates WHERE id=?').get(req.params.id)
+function deleteCandidateResumeFile(req, res) {
+  const c = db.prepare('SELECT * FROM candidates WHERE id=?').get(req.params.id)
   if (!c) return res.status(404).json({ error: '候选人不存在' })
-  if (c?.resume_path) { try { rmSync(c.resume_path, { force: true }) } catch { /* 忽略 */ } }
-  db.prepare("UPDATE candidates SET resume_name=NULL, resume_path=NULL, resume_parsed=NULL, skills=NULL, tags=NULL, experience_years=NULL WHERE id=?").run(req.params.id)
-  audit(req.user, 'delete', 'candidate_resume', req.params.id, { filename: c.resume_name, had_resume: Boolean(c.resume_path) }, null)
-  candidateEvent(Number(req.params.id), req.user, 'resume_deleted', { note: '删除简历附件' })
+  const file = resolveCandidateResume(db, c, req.params.rid || req.query.resume_id, { explicitWhenMultiple: true })
+  inTransaction(() => {
+    db.prepare('DELETE FROM candidate_resumes WHERE id=? AND candidate_id=?').run(file.id, c.id)
+    if (c.resume_source_id === file.id) selectCandidateResume(db, c.id, candidateResumeRows(db, c.id).find(row => row.parsed_data) || candidateResumeRows(db, c.id)[0] || null)
+    if (c.resume_applied_id === file.id) db.prepare('UPDATE candidates SET resume_applied_id=NULL WHERE id=?').run(c.id)
+    audit(req.user, 'delete', 'candidate_resume', file.id, { candidate_id: c.id, filename: file.original_name }, null)
+    candidateEvent(c.id, req.user, 'resume_deleted', { note: `移除简历附件：${file.original_name}；已保存的个人资料保留` })
+  })
+  try { rmSync(file.file_path, { force: true }) } catch { /* retry cleanup independently if needed */ }
   res.json({ ok: true })
-})
+}
+recruiting.delete('/candidates/:id/resume', deleteCandidateResumeFile)
+recruiting.delete('/candidates/:id/resumes/:rid', deleteCandidateResumeFile)
 
 // ── Offer 审批发起（候选人 → 审批中心，approve 后 offer_status=approved）──
 recruiting.post('/candidates/:id/offer-approval', (req, res) => {

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { seedIfEmpty } from './seed.js'
 import { org } from './routes/org.js'
 import { recruiting } from './routes/recruiting.js'
+import { feishu } from './routes/feishu.js'
 import { cost } from './routes/cost.js'
 import { employee } from './routes/employee.js'
 import { equity } from './routes/equity.js'
@@ -23,6 +24,7 @@ import { option } from './routes/option.js'
 import { people } from './routes/people.js'
 import { market } from './routes/market.js'
 import { ResumeModelError } from './lib/local_resume_model.js'
+import { FeishuError } from './lib/feishu_client.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 seedIfEmpty()
@@ -58,7 +60,8 @@ app.use((req, res, next) => {
   next()
 })
 
-app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now() }))
+// Resolve from the running module, not the movable current symlink or an env value.
+app.get('/api/health', (req, res) => res.json({ ok: true, ts: Date.now(), release_id: path.basename(path.dirname(__dirname)) }))
 app.use('/api', authRoutes)
 app.use('/api', staff)
 app.use('/api', core)
@@ -71,6 +74,7 @@ app.use('/api', market)
 
 app.use('/api', auth(), org)
 app.use('/api/recruiting', auth(HR_ROLES), recruiting)
+app.use('/api/integrations/feishu', auth(HR_ROLES), feishu)
 app.use('/api/cost', auth(OPS_ROLES), cost)
 app.use('/api/equity', auth(OPS_ROLES), equity)
 app.use('/api/employees', auth(HR_ROLES), employee)
@@ -100,7 +104,7 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err)
   const status = err?.statusCode || (err?.name === 'MulterError' ? 400 : 500)
   res.setHeader('Content-Type', 'application/json')
-  res.status(status).json({ error: status < 500 || err instanceof ResumeModelError ? err.message : '服务器内部错误' })
+  res.status(status).json({ error: status < 500 || err instanceof ResumeModelError || err instanceof FeishuError ? err.message : '服务器内部错误' })
 })
 process.on('unhandledRejection', reason => {
   console.error('[unhandledRejection]', reason?.message || reason)

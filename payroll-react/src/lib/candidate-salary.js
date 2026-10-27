@@ -14,3 +14,6 @@ export function expectedSalaryRange(candidate) {
 
 export const expectedSalaryLabel = candidate => EXPECTED_SALARY_RANGES.find(item => item.key === expectedSalaryRange(candidate))?.label || '暂无'
 export const exactExpectedSalary = candidate => candidate?.expected_salary_range == null ? Number(candidate?.expected_salary || 0) : 0
+
+export const expectedAnnualSalaryLabel = candidate => candidate?.expected_salary_annual == null || candidate.expected_salary_annual === ''
+  ? '—' : `¥${Number(candidate.expected_salary_annual).toLocaleString('zh-CN')}/年`

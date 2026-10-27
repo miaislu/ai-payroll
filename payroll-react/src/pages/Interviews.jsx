@@ -4,6 +4,7 @@ import { getInterviews, createInterview, updateInterview, deleteInterview, getCa
 import { useDialog } from '../components/DialogProvider.jsx'
 import { INTERVIEW_RATINGS, interviewRating, INTERVIEW_STATUS_LABELS } from '../data.js'
 import { currentDate } from '../lib/period.js'
+import { interviewOutcomeLabel } from '../lib/interview-outcome.js'
 
 const EMPTY = { candidate_id: null, round_no: 1, interviewer: '', status: 'completed', result: 'pending', notes: '' }
 
@@ -65,7 +66,7 @@ export default function Interviews({ toast, backendUp, goto, candidateId }) {
               <td>R{iv.round_no}</td>
               <td>{iv.interviewer}</td>
               <td>{iv.interview_date}</td>
-              <td><Chip kind={iv.status === 'completed' ? 'ok' : 'info'}>{INTERVIEW_STATUS_LABELS[iv.status] || '已完成'}</Chip></td>
+              <td><Chip kind={iv.status === 'completed' ? interviewRating(iv.result).kind : 'info'}>{interviewOutcomeLabel(iv)}</Chip></td>
               <td>{iv.status === 'completed' ? <Chip kind={interviewRating(iv.result).kind}>{interviewRating(iv.result).label}</Chip> : '—'}</td>
               <td className="hint">{iv.notes || '—'}</td>
               <td style={{ display: 'flex', gap: 6 }}>

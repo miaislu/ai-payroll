@@ -11,6 +11,7 @@ BACKUP_DIR="${BACKUP_DIR:-$HOME/Library/Application Support/AI Payroll Backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 CITY_POLICY_FILE="${CITY_POLICY_FILE:-}"
 JOB_CATALOG_FILE="${JOB_CATALOG_FILE:-$DATA_DIR/job-catalog.json}"
+FEISHU_CONFIG_FILE="${FEISHU_CONFIG_FILE:-$DATA_DIR/feishu-config.json}"
 LAUNCH_DOMAIN="gui/$(id -u)"
 LOCK_DIR="$DATA_DIR/.backup.lock"
 APP_WAS_LOADED=0
@@ -24,15 +25,21 @@ fail() {
 
 restart_app() {
   if [ "$APP_WAS_LOADED" -eq 1 ] && [ "$APP_STOPPED" -eq 1 ] && [ -f "$APP_PLIST" ]; then
-    launchctl bootstrap "$LAUNCH_DOMAIN" "$APP_PLIST" >/dev/null 2>&1 || true
-    launchctl kickstart -k "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null 2>&1 || true
+    if ! launchctl print "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null 2>&1; then
+      launchctl bootstrap "$LAUNCH_DOMAIN" "$APP_PLIST" >/dev/null || return 1
+    fi
+    launchctl kickstart -k "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null || return 1
     APP_STOPPED=0
   fi
 }
 
 cleanup() {
   local code=$?
-  restart_app
+  trap - EXIT INT TERM
+  if ! restart_app; then
+    echo "[backup] 错误：本地服务未能恢复，请检查启动任务及 app-error.log" >&2
+    code=1
+  fi
   if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf "$STAGE"; fi
   rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
   exit "$code"
@@ -59,8 +66,21 @@ fi
 # 为保证数据库记录与简历附件属于同一时间点，备份时短暂停止本地服务。
 if launchctl print "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null 2>&1; then
   APP_WAS_LOADED=1
-  launchctl bootout "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null
   APP_STOPPED=1
+  launchctl bootout "$LAUNCH_DOMAIN/$APP_LABEL" >/dev/null
+fi
+
+# A detached old server must not keep changing files during a supposed snapshot.
+# Custom labels are used by isolated backup tests and do not own the HR port.
+if [ "$APP_LABEL" = "com.aipayroll.local" ]; then
+  command -v lsof >/dev/null || fail "缺少 lsof，无法确认本地服务已停止"
+  for _ in {1..40}; do
+    if ! lsof -nP -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
+    sleep 0.2
+  done
+  if lsof -nP -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+    fail "3001 端口仍有进程运行，已停止备份以避免数据库与附件快照不一致"
+  fi
 fi
 
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -80,6 +100,10 @@ if [ -n "$CITY_POLICY_FILE" ] && [ -f "$CITY_POLICY_FILE" ]; then
 fi
 if [ -f "$JOB_CATALOG_FILE" ]; then
   cp -p "$JOB_CATALOG_FILE" "$STAGE/payload/job-catalog.json"
+fi
+if [ -f "$FEISHU_CONFIG_FILE" ]; then
+  cp -p "$FEISHU_CONFIG_FILE" "$STAGE/payload/feishu-config.json"
+  chmod 600 "$STAGE/payload/feishu-config.json"
 fi
 if [ -d "$DATA_DIR/private-tools" ]; then
   ditto "$DATA_DIR/private-tools" "$STAGE/payload/private-tools"

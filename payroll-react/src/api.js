@@ -88,15 +88,16 @@ export const deleteFamily = fid => api('/employees/family/' + fid, { method: 'DE
 export const getResumes = id => api('/employees/' + id + '/resume')
 export const uploadResume = (id, file) => {
   const fd = new FormData()
-  fd.append('resume', file)
+  for (const item of Array.isArray(file) ? file : [file]) fd.append('resume', item)
   return fetch(BASE + '/employees/' + id + '/resume', {
     method: 'POST',
     credentials: 'include',
     headers: {},
     body: fd
   }).then(async r => {
-    if (!r.ok) throw new Error('上传失败 ' + r.status)
-    return r.json()
+    const data = await r.json()
+    if (!r.ok) throw new Error(data.error || '上传失败 ' + r.status)
+    return data
   })
 }
 const resumeParseOptions = mode => typeof mode === 'string' ? { mode } : { allow_external: mode === true }
@@ -125,7 +126,7 @@ export const getCandidatesKanban = () => api('/recruiting/candidates/kanban')
 export const createCandidate = body => api('/recruiting/candidates', { method: 'POST', body })
 export const createCandidateFromResume = async (file, fields = {}) => {
   const form = new FormData()
-  form.append('resume', file)
+  for (const item of Array.isArray(file) ? file : [file]) form.append('resume', item)
   for (const [key, value] of Object.entries(fields)) if (value != null) form.append(key, String(value))
   const response = await fetch(BASE + '/recruiting/candidates/from-resume', { method: 'POST', credentials: 'include', body: form })
   const data = await response.json()
@@ -134,6 +135,8 @@ export const createCandidateFromResume = async (file, fields = {}) => {
 }
 export const updateCandidate = (id, body) => api('/recruiting/candidates/' + id, { method: 'PUT', body })
 export const deleteCandidate = id => api('/recruiting/candidates/' + id, { method: 'DELETE' })
+export const getDeletedCandidates = () => api('/recruiting/candidates/deleted')
+export const restoreDeletedCandidate = id => api('/recruiting/candidates/deleted/' + id + '/restore', { method: 'POST' })
 export const setCandidateStage = (id, body) => api('/recruiting/candidates/' + id + '/stage', { method: 'POST', body })
 export const onboardCandidate = (id, body) => api('/recruiting/candidates/' + id + '/onboard', { method: 'POST', body })
 export const getInterviews = () => api('/recruiting/interviews')
@@ -153,22 +156,32 @@ export const getOfferSuggest = params => api('/recruiting/offer/suggest?' + new 
 export const createOfferApproval = (id, body) => api('/recruiting/candidates/' + id + '/offer-approval', { method: 'POST', body })
 export const uploadCandidateResume = (id, file) => {
   const fd = new FormData()
-  fd.append('resume', file)
+  for (const item of Array.isArray(file) ? file : [file]) fd.append('resume', item)
   return fetch(BASE + '/recruiting/candidates/' + id + '/resume', {
     method: 'POST',
     credentials: 'include',
     headers: {},
     body: fd
   }).then(async r => {
-    if (!r.ok) throw new Error('上传失败 ' + r.status)
-    return r.json()
+    const data = await r.json()
+    if (!r.ok) throw new Error(data.error || '上传失败 ' + r.status)
+    return data
   })
 }
-export const parseCandidateResume = (id, mode = 'rules') => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: resumeParseOptions(mode) })
+export const parseCandidateResume = (id, mode = 'rules', resumeId) => api('/recruiting/candidates/' + id + '/resume/parse', { method: 'POST', body: { ...resumeParseOptions(mode), resume_id: resumeId } })
+export const getCandidateResumeResult = (id, rid) => api('/recruiting/candidates/' + id + '/resumes/' + rid + '/result')
 export const applyCandidateResume = (id, body) => api('/recruiting/candidates/' + id + '/resume/apply', { method: 'POST', body })
 export const matchCandidateRequisitions = (id, personal_profile) => api('/recruiting/candidates/' + id + '/requisition-match', { method: 'POST', body: { personal_profile } })
-export const deleteCandidateResume = id => api('/recruiting/candidates/' + id + '/resume', { method: 'DELETE' })
-export const downloadCandidateResume = (id, filename) => downloadAuthenticated('/recruiting/candidates/' + id + '/resume', filename)
+export const deleteCandidateResume = (id, rid) => api('/recruiting/candidates/' + id + '/resumes/' + rid, { method: 'DELETE' })
+export const downloadCandidateResume = (id, rid, filename) => downloadAuthenticated('/recruiting/candidates/' + id + '/resumes/' + rid + '/file', filename)
+
+export const getFeishuConfig = () => api('/integrations/feishu/config')
+export const saveFeishuConfig = body => api('/integrations/feishu/config', { method: 'PUT', body })
+export const resolveFeishuLink = body => api('/integrations/feishu/resolve-link', { method: 'POST', body })
+export const probeFeishu = () => api('/integrations/feishu/probe', { method: 'POST', body: {} })
+export const initializeFeishuFields = () => api('/integrations/feishu/initialize-fields', { method: 'POST', body: {} })
+export const previewFeishuSync = body => api('/integrations/feishu/preview', { method: 'POST', body })
+export const pushFeishuSync = token => api('/integrations/feishu/push', { method: 'POST', body: { token } })
 
 // ── v2：薪酬成本管理 ──
 export const getCostSummary = period => api('/cost/summary' + (period ? '?period=' + period : ''))

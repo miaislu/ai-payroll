@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
@@ -78,7 +78,7 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
     min_wage: 1000
   })) }))
   const port = await freePort()
-  let modelFails = false, matchInput = null
+  let modelFails = false, matchInput = null, holdResumeModel = null
   const modelServer = http.createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += chunk
@@ -91,6 +91,10 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
       const job = matchInput.available_jobs.find(item => item.title === '岗位关联测试')
       const result = { matches: job ? [{ requisition_id: job.id, confidence: 'high', reason: '任职经历明确涉及验证职责', evidence: ['UVM'] }] : [], unmatched_reason: '' }
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] }))
+    }
+    if (holdResumeModel) {
+      const hold = holdResumeModel; holdResumeModel = null
+      hold.started(); await hold.done
     }
     const basic = Object.fromEntries(['name', 'gender', 'date_of_birth', 'marital_status', 'nationality', 'education_level', 'mobile', 'personal_email', 'current_address', 'skills'].map(key => [key, '']))
     basic.name = '模型测试人选'; basic.skills = 'Python,UVM'
@@ -110,9 +114,26 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   })
   await waitForServer(child)
   const base = `http://127.0.0.1:${port}`
+  const releaseHealth = await request(base, '/api/health')
+  assert.equal(releaseHealth.data.ok, true)
+  assert.equal(releaseHealth.data.release_id, path.basename(path.dirname(projectDir)))
   const hr = await login(base, 'hr', 'hr123')
   const finance = await login(base, 'finance', 'finance123')
   const founder = await login(base, 'founder', 'admin123')
+  const feishuPath = '/api/integrations/feishu'
+  assert.equal((await request(base, feishuPath + '/config')).response.status, 401)
+  assert.equal((await request(base, feishuPath + '/config', { cookie: finance })).response.status, 403)
+  assert.equal((await request(base, feishuPath + '/config', { cookie: hr })).data.configured, false)
+  assert.equal((await request(base, feishuPath + '/config', { cookie: hr, method: 'PUT', body: {} })).response.status, 403)
+  assert.equal((await request(base, feishuPath + '/initialize-fields', { cookie: hr, method: 'POST', body: {} })).response.status, 403)
+  assert.equal((await request(base, feishuPath + '/resolve-link', { cookie: hr, method: 'POST', body: {} })).response.status, 403)
+  assert.equal((await request(base, feishuPath + '/resolve-link', { cookie: finance, method: 'POST', body: {} })).response.status, 403)
+  assert.equal((await request(base, feishuPath + '/resolve-link', { cookie: founder, method: 'POST', body: { base_url: 'http://127.0.0.1/private' } })).response.status, 400)
+  assert.equal((await request(base, feishuPath + '/probe', { cookie: hr, method: 'POST', body: {} })).response.status, 409)
+  const localFeishuPreview = await request(base, feishuPath + '/preview', { cookie: hr, method: 'POST', body: { candidate_ids: [1], fields: ['name'], attachments: {} } })
+  assert.equal(localFeishuPreview.response.status, 200, JSON.stringify(localFeishuPreview.data))
+  assert.equal(localFeishuPreview.data.ready, false)
+  assert.equal((await request(base, feishuPath + '/push', { cookie: founder, method: 'POST', body: { token: localFeishuPreview.data.token } })).response.status, 409)
   assert.equal((await request(base, '/api/recruiting/resume-parser/status')).response.status, 401)
   assert.equal((await request(base, '/api/recruiting/resume-parser/status', { cookie: finance })).response.status, 403)
   assert.equal((await request(base, '/api/recruiting/resume-parser/status', { cookie: hr })).data.available, true)
@@ -171,12 +192,23 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   assert.equal(storedHeadhunter.expenses[0].amount, 120000)
 
   const rangedCandidate = await request(base, '/api/recruiting/candidates', { cookie: hr, method: 'POST', body: {
-    name: '薪资区间人选', expected_salary_range: '30k_50k'
+    name: '薪资区间人选', expected_salary_range: '30k_50k', expected_salary_annual: 1200000
   } })
   assert.equal(rangedCandidate.response.status, 200)
   const rangedRows = await request(base, '/api/recruiting/candidates', { cookie: hr })
   assert.equal(rangedRows.data.find(item => item.id === rangedCandidate.data.id).expected_salary_range, '30k_50k')
   assert.equal(rangedRows.data.find(item => item.id === rangedCandidate.data.id).expected_salary, null)
+  assert.equal(rangedRows.data.find(item => item.id === rangedCandidate.data.id).expected_salary_annual, 1200000)
+  assert.equal((await request(base, `/api/recruiting/candidates/${rangedCandidate.data.id}`, {
+    cookie: hr, method: 'PUT', body: { expected_salary_annual: -1 }
+  })).response.status, 400)
+  assert.equal((await request(base, `/api/recruiting/candidates/${rangedCandidate.data.id}`, {
+    cookie: hr, method: 'PUT', body: { expected_salary_annual: 1500000 }
+  })).response.status, 200)
+  const annualSaved = (await request(base, '/api/recruiting/candidates', { cookie: hr })).data.find(item => item.id === rangedCandidate.data.id)
+  assert.equal(annualSaved.expected_salary_annual, 1500000)
+  assert.equal(annualSaved.expected_salary, null)
+  assert.equal(annualSaved.expected_salary_range, '30k_50k')
   assert.equal((await request(base, `/api/recruiting/candidates/${rangedCandidate.data.id}`, {
     cookie: hr, method: 'PUT', body: { expected_salary_range: 'invalid' }
   })).response.status, 400)
@@ -231,9 +263,11 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
     const uploadResponse = await fetch(`${base}/api/recruiting/candidates/${referredCandidate.data.id}/resume`, {
       method: 'POST', headers: { Cookie: hr }, body: upload
     })
-    assert.equal(uploadResponse.status, 200, await uploadResponse.text())
+    const candidateUploadData = await uploadResponse.json()
+    assert.equal(uploadResponse.status, 200, JSON.stringify(candidateUploadData))
+    const candidateResumeId = candidateUploadData.resumes[0].id
     const parsedResume = await request(base, `/api/recruiting/candidates/${referredCandidate.data.id}/resume/parse`, {
-      cookie: hr, method: 'POST', body: { allow_external: false }
+      cookie: hr, method: 'POST', body: { allow_external: false, resume_id: candidateResumeId }
     })
     assert.equal(parsedResume.response.status, 200, JSON.stringify(parsedResume.data))
     assert.equal(parsedResume.data.parsed.basic.name, '测试人选')
@@ -253,7 +287,7 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
     const candidateParsePath = `/api/recruiting/candidates/${referredCandidate.data.id}/resume/parse`
     const employeeParsePath = `/api/employees/1/resume/${employeeUploadData.id}/parse`
     for (const pathname of [candidateParsePath, employeeParsePath]) {
-      const result = await request(base, pathname, { cookie: hr, method: 'POST', body: { mode: 'local_model' } })
+      const result = await request(base, pathname, { cookie: hr, method: 'POST', body: { mode: 'local_model', resume_id: candidateResumeId } })
       assert.equal(result.response.status, 200, JSON.stringify(result.data))
       assert.equal(result.data.engine, 'local-llm')
       assert.equal(result.data.parsed.basic.name, '模型测试人选')
@@ -328,7 +362,7 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
     assert.ok(checkDb.prepare('SELECT before_json FROM resume_apply_history WHERE employee_id=1').all().some(item => item.before_json.includes('旧错误企业')))
     modelFails = true
     for (const pathname of [candidateParsePath, employeeParsePath]) {
-      const failed = await request(base, pathname, { cookie: hr, method: 'POST', body: { mode: 'local_model' } })
+      const failed = await request(base, pathname, { cookie: hr, method: 'POST', body: { mode: 'local_model', resume_id: candidateResumeId } })
       assert.equal(failed.response.status, 502)
       assert.match(failed.data.error, /原有结果未改动/)
     }
@@ -449,6 +483,81 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
     assert.equal(result.response.status, 200, `${pathname}: ${JSON.stringify(result.data)}`)
     return result.data
   }
+  const multiCandidate = await ok('/api/recruiting/candidates', 'POST', { name: '多附件测试' })
+  const multiBase = `/api/recruiting/candidates/${multiCandidate.id}`
+  const cvA = '姓名：附件甲\n技能：Python', cvB = '姓名：附件乙\n技能：UVM'
+  const multiForm = new FormData()
+  multiForm.append('resume', new Blob([cvA]), '简历.txt')
+  multiForm.append('resume', new Blob([cvB]), '简历.txt')
+  const multiUpload = await fetch(base + multiBase + '/resume', { method: 'POST', headers: { Cookie: hr }, body: multiForm })
+  const multiData = await multiUpload.json()
+  assert.equal(multiUpload.status, 200, JSON.stringify(multiData))
+  const [fileA, fileB] = multiData.resumes
+  assert.notEqual(fileA.id, fileB.id)
+  assert.equal((await ok(multiBase + '/resumes')).length, 2)
+  assert.equal((await request(base, multiBase + '/resume/parse', { cookie: hr, method: 'POST', body: { mode: 'rules' } })).response.status, 400)
+  assert.equal((await request(base, multiBase + '/resumes/' + fileA.id + '/file', { cookie: hr })).data, cvA)
+  assert.equal((await request(base, multiBase + '/resumes/' + fileB.id + '/file', { cookie: hr })).data, cvB)
+  const parsedA = await ok(multiBase + '/resume/parse', 'POST', { mode: 'rules', resume_id: fileA.id })
+  const parsedB = await ok(multiBase + '/resume/parse', 'POST', { mode: 'rules', resume_id: fileB.id })
+  assert.equal(parsedA.parsed.basic.name, '附件甲')
+  assert.equal(parsedB.parsed.basic.name, '附件乙')
+  assert.equal((await ok(multiBase + '/resumes/' + fileA.id + '/result')).parsed.basic.name, '附件甲')
+  assert.equal((await request(base, `/api/recruiting/candidates/${referredCandidate.data.id}/resumes/${fileA.id}/file`, { cookie: hr })).response.status, 404)
+  assert.equal((await request(base, `/api/recruiting/candidates/${referredCandidate.data.id}/resume/parse`, { cookie: hr, method: 'POST', body: { mode: 'rules', resume_id: fileA.id } })).response.status, 404)
+  assert.equal((await request(base, `/api/recruiting/candidates/${referredCandidate.data.id}/resumes/${fileA.id}`, { cookie: hr, method: 'DELETE' })).response.status, 404)
+  assert.equal((await request(base, multiBase + '/resumes', { cookie: finance })).response.status, 403)
+  assert.equal((await request(base, multiBase + '/resume/apply', { cookie: hr, method: 'POST', body: { resume_id: fileA.id, result_token: parsedB.result_token } })).response.status, 409)
+  await ok(multiBase + '/resume/apply', 'POST', { resume_id: fileA.id, result_token: parsedA.result_token })
+  const extraForm = new FormData(); extraForm.append('resume', new Blob(['姓名：附件丙']), '补充简历.txt')
+  const extraUpload = await fetch(base + multiBase + '/resume', { method: 'POST', headers: { Cookie: hr }, body: extraForm })
+  assert.equal(extraUpload.status, 200)
+  const readMulti = async () => (await ok('/api/recruiting/candidates')).find(row => row.id === multiCandidate.id)
+  assert.equal((await readMulti()).resume_source_id, fileA.id)
+  assert.equal((await readMulti()).resume_applied_id, fileA.id)
+  assert.equal((await readMulti()).personal_profile.basic.name, '附件甲')
+  let started, release
+  const modelStarted = new Promise(resolve => { started = resolve })
+  const modelDone = new Promise(resolve => { release = resolve })
+  holdResumeModel = { started, done: modelDone }
+  const lateParse = request(base, multiBase + '/resume/parse', { cookie: hr, method: 'POST', body: { mode: 'local_model', resume_id: fileB.id } })
+  await modelStarted
+  try { await ok(multiBase + '/resumes/' + fileB.id, 'DELETE') } finally { release() }
+  assert.equal((await lateParse).response.status, 409)
+  assert.equal((await readMulti()).resume_source_id, fileA.id)
+  assert.equal((await ok(multiBase + '/resumes')).length, 2)
+  assert.equal((await request(base, multiBase + '/resumes/' + fileA.id + '/file', { cookie: hr })).data, cvA)
+  await ok(multiBase + '/resumes/' + fileA.id, 'DELETE')
+  assert.equal((await readMulti()).personal_profile.basic.name, '附件甲')
+  assert.equal((await readMulti()).resume_applied_id, null)
+  assert.equal((await ok(multiBase + '/resumes')).length, 1)
+  const uploadsFolder = path.join(dir, 'uploads', 'candidate_resumes')
+  const beforeBad = readdirSync(uploadsFolder).sort()
+  const invalidBatch = new FormData()
+  invalidBatch.append('resume', new Blob(['有效文本']), '有效.txt')
+  invalidBatch.append('resume', new Blob(['not a PDF']), '无效.pdf')
+  assert.equal((await fetch(base + multiBase + '/resume', { method: 'POST', headers: { Cookie: hr }, body: invalidBatch })).status, 400)
+  assert.deepEqual(readdirSync(uploadsFolder).sort(), beforeBad)
+  assert.equal((await ok(multiBase + '/resumes')).length, 1)
+  const tooMany = new FormData()
+  for (let i = 0; i < 11; i++) tooMany.append('resume', new Blob(['文本']), `file-${i}.txt`)
+  assert.equal((await fetch(base + multiBase + '/resume', { method: 'POST', headers: { Cookie: hr }, body: tooMany })).status, 400)
+  assert.deepEqual(readdirSync(uploadsFolder).sort(), beforeBad)
+  const createMulti = new FormData()
+  createMulti.append('resume', new Blob([cvA]), '版本甲.txt'); createMulti.append('resume', new Blob([cvB]), '版本乙.txt'); createMulti.append('primary_index', '1')
+  const createdMultiResponse = await fetch(base + '/api/recruiting/candidates/from-resume', { method: 'POST', headers: { Cookie: hr }, body: createMulti })
+  const createdMulti = await createdMultiResponse.json()
+  assert.equal(createdMultiResponse.status, 200, JSON.stringify(createdMulti))
+  assert.equal((await ok('/api/recruiting/candidates')).find(row => row.id === createdMulti.id).name, '附件乙')
+  assert.equal(createdMulti.resumes.length, 2)
+  assert.equal(createdMulti.resumes[0].has_parsed, false)
+  assert.equal(createdMulti.resumes[1].has_parsed, true)
+  const employeeBatch = new FormData(); employeeBatch.append('resume', new Blob([cvA]), 'employee-A.txt'); employeeBatch.append('resume', new Blob([cvB]), 'employee-B.txt')
+  const employeeBatchResponse = await fetch(base + '/api/employees/1/resume', { method: 'POST', headers: { Cookie: hr }, body: employeeBatch })
+  const employeeBatchData = await employeeBatchResponse.json()
+  assert.equal(employeeBatchResponse.status, 200, JSON.stringify(employeeBatchData))
+  assert.equal(employeeBatchData.resumes.length, 2)
+  assert.equal((await ok(`/api/employees/1/resume/${employeeBatchData.resumes[1].id}/parse`, 'POST', { mode: 'rules' })).parsed.basic.name, '附件乙')
   const cv = new FormData()
   const cvText = '姓名：流转人选\n手机：13800009999\n邮箱：workflow@example.com\n技能：Python RTL Verilog\n上海交通大学 本科 微电子 2020'
   cv.append('resume', new Blob([cvText]), 'workflow.txt')
@@ -500,6 +609,8 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   } })
   const employeeBody = { candidate_id: imported.id, name: '流转人选', grade: 'P4', job_family: '研发管理', city: '上海',
     monthly_base: 50000, fixed_salary_months: 13, annual_bonus_months: 2, perf_ratio: 0, hire_date: today, status: 'active' }
+  const supplemental = new FormData(); supplemental.append('resume', new Blob(['补充工作记录']), 'supplemental.txt')
+  assert.equal((await fetch(base + `/api/recruiting/candidates/${imported.id}/resume`, { method: 'POST', headers: { Cookie: hr }, body: supplemental })).status, 200)
   const linkedEmployee = await ok('/api/employees', 'POST', employeeBody)
   assert.equal((await person()).employee_id, linkedEmployee.id)
   assert.equal((await person()).stage, 'hired')
@@ -511,20 +622,45 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   assert.equal(profile.work_experience[0].note, '已核对的任职经历')
   assert.equal((await request(base, `/api/recruiting/candidates/${imported.id}`, { cookie: hr, method: 'PUT', body: { requisition_id: matchingJob.data.id } })).response.status, 409)
   const employeeResumes = await ok(`/api/employees/${linkedEmployee.id}/resume`)
-  assert.equal(employeeResumes.length, 1)
+  assert.equal(employeeResumes.length, 2)
   const employeesBeforeRetry = (await ok('/api/employees')).length
   const retry = await request(base, '/api/employees', { cookie: hr, method: 'POST', body: employeeBody })
   assert.equal(retry.response.status, 409)
   assert.equal((await ok('/api/employees')).length, employeesBeforeRetry)
-  await ok(`/api/recruiting/candidates/${imported.id}/resume`, 'DELETE')
-  const copiedCv = await request(base, `/api/employees/${linkedEmployee.id}/resume/${employeeResumes[0].id}/file`, { cookie: hr })
+  await ok(`/api/recruiting/candidates/${imported.id}/resumes/${imported.source_resume_id}`, 'DELETE')
+  assert.equal((await ok(`/api/recruiting/candidates/${imported.id}/resumes`)).length, 1)
+  const originalCopy = employeeResumes.find(row => row.original_name === 'workflow.txt')
+  const copiedCv = await request(base, `/api/employees/${linkedEmployee.id}/resume/${originalCopy.id}/file`, { cookie: hr })
   assert.equal(copiedCv.response.status, 200)
   assert.equal(copiedCv.data, cvText, '候选人删除旧简历不影响员工档案中的独立副本')
   await ok(`/api/employees/${linkedEmployee.id}/profile`, 'PUT', { current_address: '测试地址', skills: '更新技能' })
   assert.equal((await ok(`/api/employees/${linkedEmployee.id}/profile`)).employee.skills, '更新技能')
   assert.ok((await person()).timeline.some(item => item.type === 'employee_linked'))
   const rejected = await ok('/api/recruiting/candidates', 'POST', { name: '淘汰测试人选' })
-  const cancelled = await ok('/api/recruiting/interviews', 'POST', { candidate_id: rejected.id, interviewer: '面试官', round_no: 1, interview_date: today, status: 'scheduled' })
+  const completed = await ok('/api/recruiting/interviews', 'POST', { candidate_id: rejected.id, interviewer: '面试官', round_no: 1, interview_date: today, status: 'scheduled' })
+  const future = await ok('/api/recruiting/interviews', 'POST', { candidate_id: rejected.id, interviewer: '下一轮', round_no: 2, interview_date: '2099-01-01', status: 'scheduled' })
   await ok(`/api/recruiting/candidates/${rejected.id}/stage`, 'POST', { stage: 'rejected', reject_reason: '测试终止流程' })
-  assert.equal((await ok('/api/recruiting/interviews')).find(item => item.id === cancelled.id).status, 'cancelled')
+  const rejectedRounds = (await ok('/api/recruiting/interviews')).filter(item => item.candidate_id === rejected.id)
+  assert.equal(rejectedRounds.find(item => item.id === completed.id).status, 'completed')
+  assert.equal(rejectedRounds.find(item => item.id === completed.id).result, 'not_recommend')
+  assert.equal(rejectedRounds.find(item => item.id === future.id).status, 'cancelled')
+
+  // Removing one duplicate is reversible and never removes the other person's data.
+  const duplicate = await ok('/api/recruiting/candidates', 'POST', { name: '淘汰测试人选' })
+  const deletion = await ok(`/api/recruiting/candidates/${rejected.id}`, 'DELETE')
+  assert.equal(deletion.recoverable, true)
+  const visibleAfterDelete = await ok('/api/recruiting/candidates')
+  assert.equal(visibleAfterDelete.some(item => item.id === rejected.id), false)
+  assert.equal(visibleAfterDelete.some(item => item.id === duplicate.id), true)
+  assert.equal((await ok('/api/recruiting/interviews')).some(item => item.candidate_id === rejected.id), false)
+  const archived = (await ok('/api/recruiting/candidates/deleted')).find(item => item.candidate_id === rejected.id)
+  assert.ok(archived)
+  await ok(`/api/recruiting/candidates/deleted/${archived.id}/restore`, 'POST', {})
+  const restored = (await ok('/api/recruiting/candidates')).find(item => item.id === rejected.id)
+  assert.equal(restored.stage, 'rejected')
+  assert.equal(restored.interviews.length, rejectedRounds.length)
+  assert.equal(restored.interviews.find(item => item.id === completed.id).result, 'not_recommend')
+  assert.equal((await request(base, `/api/recruiting/candidates/deleted/${archived.id}/restore`, { cookie: hr, method: 'POST', body: {} })).response.status, 404)
+  assert.equal((await ok('/api/recruiting/candidates/deleted')).some(item => item.id === archived.id), false)
+  assert.equal((await request(base, `/api/recruiting/candidates/${imported.id}`, { cookie: hr, method: 'DELETE' })).response.status, 409)
 })

@@ -5,6 +5,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { candidatePersonalProfile, normalizeResumeProfile } from './resume_profile.js'
 import { writeEmployeeResumeProfile } from './employee_resume_apply.js'
+import { candidateResumeRows } from './candidate_resumes.js'
+import { shanghaiToday } from './interview_stats.js'
+import { rejectionInterviewChanges } from './interview_closure.js'
 
 export const CANDIDATE_STAGES = ['new', 'screening', 'waiting', 'interview', 'offer', 'accepted', 'hired', 'rejected', 'withdrawn']
 export const STAGE_LABELS = { new: '新简历', screening: '初筛', waiting: '待面试', interview: '面试中', offer: 'Offer', accepted: '已录用', hired: '已建员工档案', rejected: '已淘汰', withdrawn: '已放弃' }
@@ -37,7 +40,14 @@ export function changeCandidateStage(candidateId, stage, user, { note = '', roun
   if (!Number.isInteger(nextRound) || nextRound < 1 || nextRound > 20) throw failure('面试轮次须为 1-20 的整数', 400)
   db.prepare('UPDATE candidates SET stage=?,current_round=?,reject_reason=CASE WHEN ? THEN ? ELSE reject_reason END WHERE id=?')
     .run(stage, nextRound, stage === 'rejected' ? 1 : 0, note, candidateId)
-  if (['rejected', 'withdrawn', 'accepted'].includes(stage)) {
+  if (stage === 'rejected') {
+    const interviews = db.prepare('SELECT * FROM interviews WHERE candidate_id=?').all(candidateId)
+    for (const interview of rejectionInterviewChanges(interviews, shanghaiToday())) {
+      db.prepare('UPDATE interviews SET status=?,result=?,score=? WHERE id=?').run(interview.status, interview.result, interview.score, interview.id)
+      recordInterviewEvent(interview, user, interview.status === 'completed' ? 'interview_completed' : 'interview_cancelled',
+        interview.status === 'completed' ? '淘汰人选，已发生面试记为完成；当前轮次未通过，已有面评保留' : '淘汰人选，取消尚未进行的未来面试安排')
+    }
+  } else if (['withdrawn', 'accepted'].includes(stage)) {
     for (const interview of db.prepare("SELECT * FROM interviews WHERE candidate_id=? AND status IN ('scheduled','in_progress')").all(candidateId)) {
       db.prepare("UPDATE interviews SET status='cancelled' WHERE id=?").run(interview.id)
       recordInterviewEvent({ ...interview, status: 'cancelled' }, user, 'interview_cancelled', '人选状态变更，取消未完成的面试安排')
@@ -90,7 +100,7 @@ export function linkCandidateEmployee(candidateId, employeeId, hireDate, user) {
   const employee = db.prepare('SELECT * FROM employees WHERE id=?').get(employeeId)
   if (!employee || employee.status !== 'active') throw failure('关联员工档案必须为在职状态')
   if (Number(employee.monthly_base) !== Number(candidate.offer_amount)) throw failure('关联建档的月薪须与已审批 Offer 一致')
-  let copiedPath = null
+  const copiedPaths = []
   try {
     let parsed = {}
     try { parsed = JSON.parse(candidate.resume_parsed || '{}') } catch { /* unparsed resume */ }
@@ -101,16 +111,20 @@ export function linkCandidateEmployee(candidateId, employeeId, hireDate, user) {
       if (value) db.prepare(`UPDATE employees SET ${key}=? WHERE id=? AND (${key} IS NULL OR ${key}='')`).run(String(value), employeeId)
     }
     if (candidate.profile_json) writeEmployeeResumeProfile(employeeId, normalizeResumeProfile(candidatePersonalProfile(candidate)), { fillOnly: true })
-    if (candidate.resume_path) {
+    const resumes = candidateResumeRows(db, candidate.id)
+    if (resumes.length) {
       const root = process.env.UPLOAD_DIR || fileURLToPath(new URL('../uploads/', import.meta.url))
       const folder = path.join(root, 'resumes')
       mkdirSync(folder, { recursive: true, mode: 0o700 })
-      const filename = randomUUID() + path.extname(candidate.resume_name || '')
-      copiedPath = path.join(folder, filename)
-      copyFileSync(candidate.resume_path, copiedPath)
-      db.prepare(`INSERT INTO employee_resumes(employee_id,filename,original_name,content_type,size,file_path,uploaded_at,parse_status,parsed_data)
-        VALUES(?,?,?,?,?,?,?,?,?)`).run(employeeId, filename, candidate.resume_name || filename, '', statSync(copiedPath).size, copiedPath,
-        new Date().toISOString(), candidate.resume_parsed ? 'parsed' : 'pending', candidate.resume_parsed || null)
+      for (const resume of resumes) {
+        const filename = randomUUID() + path.extname(resume.original_name || '')
+        const copiedPath = path.join(folder, filename)
+        copiedPaths.push(copiedPath)
+        copyFileSync(resume.file_path, copiedPath)
+        db.prepare(`INSERT INTO employee_resumes(employee_id,filename,original_name,content_type,size,file_path,uploaded_at,parse_status,parse_engine,parsed_data)
+          VALUES(?,?,?,?,?,?,?,?,?,?)`).run(employeeId, filename, resume.original_name || filename, resume.content_type || '', statSync(copiedPath).size, copiedPath,
+          new Date().toISOString(), resume.parsed_data ? 'parsed' : 'pending', resume.parse_engine || null, resume.parsed_data || null)
+      }
     }
     db.prepare("UPDATE candidates SET stage='hired',employee_id=?,onboard_date=? WHERE id=? AND employee_id IS NULL").run(employeeId, hireDate, candidate.id)
     candidateEvent(candidate.id, user, 'employee_linked', { from_stage: candidate.stage, to_stage: 'hired', note: `关联员工档案 #${employeeId}，入职日期 ${hireDate}` })
@@ -123,7 +137,7 @@ export function linkCandidateEmployee(candidateId, employeeId, hireDate, user) {
     }
     audit(user, 'onboard', 'candidate', candidate.id, { stage: candidate.stage }, { stage: 'hired', employee_id: employeeId })
   } catch (error) {
-    if (copiedPath) rmSync(copiedPath, { force: true })
+    for (const copiedPath of copiedPaths) try { rmSync(copiedPath, { force: true }) } catch { /* cleanup */ }
     throw error
   }
 }

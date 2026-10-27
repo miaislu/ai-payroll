@@ -8,6 +8,7 @@ DB_PATH="${DB_PATH:-$DATA_DIR/payroll.db}"
 UPLOAD_DIR="${UPLOAD_DIR:-$DATA_DIR/uploads}"
 CITY_POLICY_FILE="${CITY_POLICY_FILE:-}"
 JOB_CATALOG_FILE="${JOB_CATALOG_FILE:-$DATA_DIR/job-catalog.json}"
+FEISHU_CONFIG_FILE="${FEISHU_CONFIG_FILE:-$DATA_DIR/feishu-config.json}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/payroll}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 PAYROLL_SERVICE="${PAYROLL_SERVICE:-payroll-api}"
@@ -86,6 +87,10 @@ if [ -n "$CITY_POLICY_FILE" ] && [ -f "$CITY_POLICY_FILE" ]; then
 fi
 if [ -f "$JOB_CATALOG_FILE" ]; then
   cp -a "$JOB_CATALOG_FILE" "$stage/payload/job-catalog.json"
+fi
+if [ -f "$FEISHU_CONFIG_FILE" ]; then
+  cp -a "$FEISHU_CONFIG_FILE" "$stage/payload/feishu-config.json"
+  chmod 600 "$stage/payload/feishu-config.json"
 fi
 if [ -d "$DATA_DIR/private-tools" ]; then
   cp -a "$DATA_DIR/private-tools" "$stage/payload/private-tools"

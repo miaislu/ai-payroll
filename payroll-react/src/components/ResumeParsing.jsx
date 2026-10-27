@@ -1,4 +1,4 @@
-import { Btn, Chip, Hint, Modal } from './ui.jsx'
+import { Btn, Chip, Hint, Modal, Field } from './ui.jsx'
 import { useEffect, useState } from 'react'
 import { getResumeParserStatus } from '../api.js'
 
@@ -47,7 +47,7 @@ export function ResumeParsingStatus() {
   </div>
 }
 
-export function ResumeParsingDialog({ filename, busy, onClose, onBasicParse, onModelParse }) {
+export function ResumeParsingDialog({ filename, files, selectedId, onSelectFile, busy, onClose, onBasicParse, onModelParse }) {
   const { status, checking, refresh } = useParserStatus()
   const [method, setMethod] = useState('')
   const [error, setError] = useState('')
@@ -58,6 +58,9 @@ export function ResumeParsingDialog({ filename, busy, onClose, onBasicParse, onM
   return <Modal onClose={busy ? undefined : onClose}>
     <div className="modal resume-parser-dialog" role="dialog" aria-modal="true" aria-labelledby="resume-parser-title">
       <h3 id="resume-parser-title">选择简历解析方式</h3>
+      {files?.length > 0 && <Field label="选择要解析的文件"><select value={selectedId || ''} disabled={busy} onChange={event => { setError(''); onSelectFile(Number(event.target.value)) }}>
+        {files.map((file, index) => <option key={file.id} value={file.id}>{index + 1}. {file.original_name || file.filename}{file.uploaded_at ? ' · ' + new Date(file.uploaded_at).toLocaleString('zh-CN') : ''}</option>)}
+      </select></Field>}
       <Hint style={{ marginBottom: 14, overflowWrap: 'anywhere' }}>文件：{filename || '已上传的简历'}</Hint>
       <div className="grid g2">
         <div className="resume-method model">
