@@ -334,3 +334,89 @@ test('权限检查刷新旧令牌；99991672给出准确上传权限并丢弃缓
   assert.equal(client.token, null)
   await client.accessToken(); assert.equal(authCalls, 3)
 })
+
+
+test('备注选项与正文独立同步，预览后修改须重读，清空不改招聘状态和协作列', async t => {
+  const f = fixture(t), id = f.addCandidate()
+  f.sync.save(configuration)
+  f.setFields(allFields().filter(field => !['备注选项', '备注'].includes(field.field_name)))
+  const initialized = await f.sync.initialize()
+  assert.equal(initialized.fields.filter(field => ['notes_category', 'notes'].includes(field.key)).every(field => field.state === 'ok'), true)
+  for (const [category, label] of [['high', '高意向'], ['pending', '待定'], ['custom', '自定义']]) {
+    f.database.prepare('UPDATE candidates SET notes_category=?,notes=? WHERE id=?').run(category, '联系记录\n下周跟进', id)
+    const preview = await f.sync.preview(f.selection([id], {}, ['notes_category', 'notes']), 1)
+    assert.equal(preview.items[0].values.notes_category, label)
+    assert.equal(preview.items[0].values.notes, '联系记录\n下周跟进')
+    assert.equal((await f.sync.push(preview.token, 1)).results[0].ok, true)
+  }
+  const remote = [...f.remote.values()][0]
+  remote.fields['负责人'] = '保留协作资料'
+  f.remote.set(remote.fields['本地人选标识'], remote)
+  const stale = await f.sync.preview(f.selection([id], {}, ['notes']), 1)
+  f.database.prepare("UPDATE candidates SET notes='' WHERE id=?").run(id)
+  const staleResult = await f.sync.push(stale.token, 1)
+  assert.equal(staleResult.results[0].ok, false)
+  assert.match(staleResult.results[0].error, /变更/)
+  f.database.prepare("UPDATE candidates SET notes_category='' WHERE id=?").run(id)
+  const empty = await f.sync.preview(f.selection([id], {}, ['notes_category', 'notes']), 1)
+  assert.equal((await f.sync.push(empty.token, 1)).results[0].action, 'updated')
+  const updated = [...f.remote.values()][0]
+  assert.equal(updated.fields['备注'], '')
+  assert.equal(updated.fields['备注选项'], '')
+  assert.equal(updated.fields['负责人'], '保留协作资料')
+  assert.equal(updated.fields['招聘状态'], '待面试')
+  assert.equal(f.remote.size, 1)
+})
+
+
+test('面试日期及全轮次记录同步；未通过不混为取消，待面试不虚构结果；修改面评使旧预览失效', async t => {
+  const f = fixture(t), id = f.addCandidate(), other = f.addCandidate('其他虚构人选')
+  f.sync.save(configuration)
+  const add = (candidate, round, date, state, result, score, notes) => Number(f.database.prepare('INSERT INTO interviews(candidate_id,round_no,interview_date,interviewer,status,result,score,notes) VALUES(?,?,?,?,?,?,?,?)').run(candidate,round,date,'测试面试官',state,result,score,notes).lastInsertRowid)
+  add(id, 2, '2026-11-01', 'scheduled', 'pending', null, '')
+  const completed = add(id, 1, '2026-10-29', 'completed', 'not_recommend', 2, '技术沟通记录\n后续说明')
+  add(id, 3, '2026-11-02', 'cancelled', 'pending', null, '安排取消')
+  add(other, 1, '2026-10-30', 'completed', 'recommend', 4, '其他人的面评不得混入')
+  let preview = await f.sync.preview(f.selection([id], {}, ['interview_dates','interview_records']), 1)
+  assert.match(preview.items[0].values.interview_dates, /^第 1 轮 · 2026-10-29 · 已完成 · 未通过/)
+  assert.match(preview.items[0].values.interview_records, /结论：不推荐\n评分：2\n面评：技术沟通记录\n后续说明/)
+  assert.match(preview.items[0].values.interview_dates, /第 2 轮 · 2026-11-01 · 待面试/)
+  assert.match(preview.items[0].values.interview_dates, /第 3 轮 · 2026-11-02 · 已取消/)
+  assert.equal(preview.items[0].values.interview_records.includes('结论：待定'), false)
+  assert.equal(JSON.stringify(preview.items).includes('其他人的面评'), false)
+  f.database.prepare('UPDATE interviews SET notes=? WHERE id=?').run('更新面评',completed)
+  assert.equal((await f.sync.push(preview.token,1)).results[0].ok,false)
+  preview=await f.sync.preview(f.selection([id], {}, ['interview_dates','interview_records']),1)
+  assert.equal((await f.sync.push(preview.token,1)).results[0].ok,true)
+  assert.match([...f.remote.values()][0].fields['面试记录'],/更新面评/)
+  f.database.prepare('DELETE FROM interviews WHERE candidate_id=?').run(id)
+  preview=await f.sync.preview(f.selection([id], {}, ['interview_dates','interview_records']),1)
+  assert.equal((await f.sync.push(preview.token,1)).results[0].action,'updated')
+  assert.equal([...f.remote.values()][0].fields['面试时间'],'')
+  assert.equal([...f.remote.values()][0].fields['面试记录'],'')
+  const unselected=await f.sync.preview(f.selection([other], {}, ['notes']),1)
+  assert.equal(Object.hasOwn(unselected.items[0].values,'interview_records'),false)
+})
+
+test('选择面试同步时同时更新按轮次的日期表，保留配置绑定，重复发送不新增', async t => {
+  const f=fixture(t),id=f.addCandidate('日期表测试人选')
+  f.sync.save(configuration)
+  const saved=JSON.parse(readFileSync(f.configFile));saved.interviews_table_id='tblInterviews123';writeFileSync(f.configFile,JSON.stringify(saved))
+  const {interviewTableFields}=await import('../lib/feishu_interview_table.js')
+  const remote=new Map()
+  const client={config:{...saved,table_id:saved.interviews_table_id},fields:async()=>interviewTableFields(saved.table_id),find:async key=>structuredClone(remote.get(key)||null),write:async(fields,recordId)=>{const record={record_id:recordId||'recInterview123',fields};remote.set(fields['本地面试标识'],record);return record.record_id}}
+  f.sync.clientFactory=config=>config.table_id===saved.interviews_table_id?client:f.client
+  f.database.prepare("INSERT INTO interviews(candidate_id,round_no,interview_date,interviewer,status,result) VALUES(?,1,'2026-11-01','测试官','scheduled','pending')").run(id)
+  for(let n=0;n<2;n++){
+    const preview=await f.sync.preview(f.selection([id],{},['interview_dates','interview_records']),1)
+    const result=await f.sync.push(preview.token,1)
+    assert.equal(result.results[0].ok,true)
+    assert.equal(result.results[0].interviews_synced,1)
+  }
+  assert.equal(remote.size,1)
+  assert.equal(typeof [...remote.values()][0].fields['面试时间'],'number')
+  f.sync.save({...configuration,app_secret:''})
+  assert.equal(JSON.parse(readFileSync(f.configFile)).interviews_table_id,saved.interviews_table_id)
+  f.sync.save({...configuration,base_url:'https://example.feishu.cn/base/bascOtherBase123?table=tblTestTable123'})
+  assert.equal(JSON.parse(readFileSync(f.configFile)).interviews_table_id,undefined)
+})

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { repairLegacyResumeNames } from './lib/uploads.js'
 import { migrateCandidateResumes } from './lib/candidate_resumes.js'
+import { migrateRecruitingChannels } from './lib/recruiting_channels.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 process.umask(0o077)
@@ -649,7 +650,13 @@ const MIGRATIONS = [
       deleted_at TEXT NOT NULL, deleted_by TEXT NOT NULL,
       restored_at TEXT, restored_by TEXT
     );`
-  }
+  },
+  {
+    version: 33,
+    sql: `ALTER TABLE candidates ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+          ALTER TABLE candidates ADD COLUMN notes_category TEXT NOT NULL DEFAULT '' CHECK(notes_category IN ('','high','pending','custom'));`
+  },
+  { version: 34, sql: '', run: connection => migrateRecruitingChannels(connection) }
 ]
 export function migrate() {
   // 逐条记录已应用版本（applied_migrations），避免 MAX(version) 在版本缺口时漏应用

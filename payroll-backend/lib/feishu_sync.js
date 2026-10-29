@@ -6,6 +6,8 @@ import { readProfile } from './resume_profile.js'
 import { expectedSalaryLabel } from './candidate_salary.js'
 import { expectedAnnualSalaryLabel } from './candidate_annual_salary.js'
 import { candidateSourceToken } from './candidate_resumes.js'
+import { interviewSyncValues } from './feishu_interviews.js'
+import { syncCandidateInterviews, interviewTableFields } from './feishu_interview_table.js'
 
 const digest = value => createHash('sha256').update(value).digest('hex')
 const stages = { new: '新简历', screening: '初筛', waiting: '待面试', interview: '面试中', offer: 'Offer', accepted: '已录用', hired: '已建员工档案', rejected: '已淘汰', withdrawn: '已放弃' }
@@ -24,7 +26,7 @@ export class FeishuSync {
   status() {
     const config = this.config()
     return { configured: Boolean(config?.app_id && config?.app_secret && config?.app_token && config?.table_id),
-      app_id: config?.app_id || '', base_url: config?.base_url || '', table_id: config?.table_id || '', secret_saved: Boolean(config?.app_secret), fields: FEISHU_FIELDS }
+      interviews_table_id: config?.interviews_table_id || '', app_id: config?.app_id || '', base_url: config?.base_url || '', table_id: config?.table_id || '', secret_saved: Boolean(config?.app_secret), fields: FEISHU_FIELDS }
   }
   credentials(body) {
     const appId = String(body.app_id || '').trim()
@@ -38,7 +40,9 @@ export class FeishuSync {
   save(body) { return this.persist(parseFeishuTarget(body.base_url), this.credentials(body)) }
   persist(target, credentials) {
     if (this.busy) throw failFeishu('同步正在进行，请完成后再修改配置', 409)
-    const config = { ...target, ...credentials }
+    const previous = this.config()
+    const linkedInterviews = previous?.app_token === target.app_token && previous?.table_id === target.table_id && previous?.app_id === credentials.app_id ? previous.interviews_table_id : null
+    const config = { ...target, ...credentials, ...(linkedInterviews ? { interviews_table_id: linkedInterviews } : {}) }
     mkdirSync(path.dirname(this.configFile), { recursive: true, mode: 0o700 })
     const temp = `${this.configFile}.${randomUUID()}.tmp`
     writeFileSync(temp, JSON.stringify(config), { mode: 0o600 })
@@ -126,9 +130,13 @@ export class FeishuSync {
     // Only saved profile fields are exported. Pending model results are not confirmed information.
     const profile = readProfile(candidate.profile_json)
     const textRows = (rows, fields) => (Array.isArray(rows) ? rows : []).map(row => fields.map(key => row[key] ?? '').filter(Boolean).join(' · ')).join('\n')
-    const data = { source_key: sourceKey, name: candidate.name, phone: candidate.phone || '', email: candidate.email || '',
+    const interviewValues = selection.fields.some(key => ['interview_dates', 'interview_records'].includes(key))
+      ? interviewSyncValues(this.db.prepare('SELECT * FROM interviews WHERE candidate_id=?').all(id)) : {}
+    const data = { ...interviewValues, source_key: sourceKey, name: candidate.name, phone: candidate.phone || '', email: candidate.email || '',
       job: candidate.requisition_title || '', salary: expectedSalaryLabel(candidate),
       salary_annual: expectedAnnualSalaryLabel(candidate),
+      notes_category: ({ high: '高意向', pending: '待定', custom: '自定义' })[candidate.notes_category] || '',
+      notes: candidate.notes || '',
       status: candidate.stage === 'interview' ? `第 ${candidate.current_round || 1} 轮面试中` : stages[candidate.stage] || candidate.stage,
       channel: candidate.source_channel || '', apply_date: candidate.apply_date || candidate.created_at?.slice(0, 10) || '',
       skills: profile.basic?.skills || '', education: textRows(profile.education, ['school', 'qualification', 'major', 'graduation_year', 'note']),
@@ -183,7 +191,7 @@ export class FeishuSync {
       const report = await client.fields()
       const needed = [...preview.selection.fields, ...(preview.items.some(item => item.files.length) ? ['attachments'] : [])]
       if (schemaReport(report).some(field => needed.includes(field.key) && field.state !== 'ok')) throw failFeishu('飞书字段已变更，请重新检查并预览', 409)
-      const results = []; let permissionError = ''
+      const results = []; let permissionError = ''; let interviewClient = null
       for (const [index, item] of preview.items.entries()) {
         try {
           const fresh = this.snapshot(item.id, preview.selection)
@@ -223,7 +231,16 @@ export class FeishuSync {
           if (!remote) this.db.prepare('UPDATE feishu_sync_records SET pending_hash=? WHERE target_key=? AND source_key=?').run(item.fingerprint, target, item.source_key)
           const recordId = await client.write(fields, remote?.record_id, createToken)
           this.db.prepare('UPDATE feishu_sync_records SET record_id=?,synced_at=?,pending_hash=NULL,pending_time=NULL WHERE target_key=? AND source_key=?').run(recordId, syncedAt, target, item.source_key)
-          const result = { id: item.id, ok: true, action: remote ? 'updated' : 'created', synced_at: syncedAt }
+          let interviewsSynced = 0
+          if (config.interviews_table_id && preview.selection.fields.some(key => ['interview_dates','interview_records'].includes(key))) {
+            if (!interviewClient) {
+              interviewClient = this.clientFactory({ ...config, table_id: config.interviews_table_id })
+              const schema = await interviewClient.fields()
+              if (interviewTableFields(config.table_id).some(field => !schema.some(saved => saved.field_name === field.field_name && saved.type === field.type))) throw failFeishu('面试安排表字段缺失或类型已修改，请检查日期、轮次及关联字段',409)
+            }
+            interviewsSynced = await syncCandidateInterviews(this.db, interviewClient, { id: item.id, name: item.name }, item.source_key, recordId)
+          }
+          const result = { id: item.id, ok: true, action: remote ? 'updated' : 'created', synced_at: syncedAt, interviews_synced: interviewsSynced }
           onResult(result); results.push(result)
         } catch (error) {
           // Only our own safe errors may be sent to the browser/audit log.

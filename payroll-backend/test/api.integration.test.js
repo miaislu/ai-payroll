@@ -190,6 +190,27 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   assert.equal(storedHeadhunter.candidates[0].id, referredCandidate.data.id)
   assert.equal(storedHeadhunter.expenses[0].candidate_id, referredCandidate.data.id)
   assert.equal(storedHeadhunter.expenses[0].amount, 120000)
+  assert.equal(storedHeadhunter.candidate_count, storedHeadhunter.candidates.length)
+  assert.equal(storedHeadhunter.total_cost, storedHeadhunter.expenses.reduce((sum, item) => sum + item.amount, 0))
+  const liepin = channels.data.find(item => item.name === '猎聘')
+  const boss = channels.data.find(item => item.name === 'BOSS直聘')
+  assert.equal(liepin.type, 'job_board')
+  assert.equal(boss.type, 'job_board')
+  const platformCandidate = await request(base, '/api/recruiting/candidates', { cookie: hr, method: 'POST', body: { name: '猎聘来源统计测试', source_channel: '猎聘' } })
+  assert.equal(platformCandidate.response.status, 200)
+  const platformRow = (await request(base, '/api/recruiting/candidates', { cookie: hr })).data.find(item => item.id === platformCandidate.data.id)
+  assert.equal(platformRow.source_channel_id, liepin.id)
+  const historicalSource = new DatabaseSync(dbPath)
+  historicalSource.prepare('UPDATE candidates SET source_channel_id=NULL WHERE id=?').run(platformCandidate.data.id)
+  historicalSource.close()
+  const platformChannels = (await request(base, '/api/recruiting/channels', { cookie: hr })).data
+  const platformSummary = platformChannels.find(item => item.id === liepin.id)
+  assert.equal(platformSummary.candidate_count, liepin.candidate_count + 1)
+  assert.equal(platformSummary.candidates.filter(item => item.id === platformCandidate.data.id).length, 1)
+  assert.equal(platformChannels.find(item => item.id === boss.id).candidate_count, boss.candidate_count)
+  assert.equal((await request(base, '/api/recruiting/channels', { cookie: hr, method: 'POST', body: { name: '猎聘', type: 'job_board' } })).response.status, 409)
+  assert.equal((await request(base, `/api/recruiting/channels/${liepin.id}`, { cookie: hr, method: 'DELETE' })).response.status, 409)
+
 
   const rangedCandidate = await request(base, '/api/recruiting/candidates', { cookie: hr, method: 'POST', body: {
     name: '薪资区间人选', expected_salary_range: '30k_50k', expected_salary_annual: 1200000
@@ -209,6 +230,29 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   assert.equal(annualSaved.expected_salary_annual, 1500000)
   assert.equal(annualSaved.expected_salary, null)
   assert.equal(annualSaved.expected_salary_range, '30k_50k')
+  const noteUrl = `/api/recruiting/candidates/${rangedCandidate.data.id}`
+  const noteText = '已沟通意向\n下周跟进，保留年薪口径。'
+  for (const notes_category of ['high', 'pending', 'custom']) {
+    assert.equal((await request(base, noteUrl, { cookie: hr, method: 'PUT', body: { notes: noteText, notes_category } })).response.status, 200)
+    const noted = (await request(base, '/api/recruiting/candidates', { cookie: hr })).data.find(item => item.id === rangedCandidate.data.id)
+    assert.equal(noted.notes, noteText)
+    assert.equal(noted.notes_category, notes_category)
+    assert.equal(noted.stage, annualSaved.stage)
+    assert.equal(noted.expected_salary_annual, 1500000)
+  }
+  for (const notes of [null, 123, {}, '字'.repeat(5001)]) {
+    assert.equal((await request(base, noteUrl, { cookie: hr, method: 'PUT', body: { notes } })).response.status, 400)
+  }
+  for (const notes_category of [null, 123, 'unknown']) {
+    assert.equal((await request(base, noteUrl, { cookie: hr, method: 'PUT', body: { notes_category } })).response.status, 400)
+  }
+  assert.equal((await request(base, noteUrl, { cookie: hr, method: 'PUT', body: { expected_salary_annual: 1500000 } })).response.status, 200)
+  assert.equal((await request(base, '/api/recruiting/candidates', { cookie: hr })).data.find(item => item.id === rangedCandidate.data.id).notes, noteText)
+  assert.equal((await request(base, noteUrl, { cookie: hr, method: 'PUT', body: { notes: '', notes_category: '' } })).response.status, 200)
+  const clearedNote = (await request(base, '/api/recruiting/candidates', { cookie: hr })).data.find(item => item.id === rangedCandidate.data.id)
+  assert.equal(clearedNote.notes, '')
+  assert.equal(clearedNote.notes_category, '')
+
   assert.equal((await request(base, `/api/recruiting/candidates/${rangedCandidate.data.id}`, {
     cookie: hr, method: 'PUT', body: { expected_salary_range: 'invalid' }
   })).response.status, 400)
@@ -647,6 +691,7 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
 
   // Removing one duplicate is reversible and never removes the other person's data.
   const duplicate = await ok('/api/recruiting/candidates', 'POST', { name: '淘汰测试人选' })
+  await ok(`/api/recruiting/candidates/${rejected.id}`, 'PUT', { notes: '恢复时保留备注', notes_category: 'pending' })
   const deletion = await ok(`/api/recruiting/candidates/${rejected.id}`, 'DELETE')
   assert.equal(deletion.recoverable, true)
   const visibleAfterDelete = await ok('/api/recruiting/candidates')
@@ -658,6 +703,8 @@ test('API 权限、同源、月结、离职导出与快照不可变', { timeout:
   await ok(`/api/recruiting/candidates/deleted/${archived.id}/restore`, 'POST', {})
   const restored = (await ok('/api/recruiting/candidates')).find(item => item.id === rejected.id)
   assert.equal(restored.stage, 'rejected')
+  assert.equal(restored.notes, '恢复时保留备注')
+  assert.equal(restored.notes_category, 'pending')
   assert.equal(restored.interviews.length, rejectedRounds.length)
   assert.equal(restored.interviews.find(item => item.id === completed.id).result, 'not_recommend')
   assert.equal((await request(base, `/api/recruiting/candidates/deleted/${archived.id}/restore`, { cookie: hr, method: 'POST', body: {} })).response.status, 404)

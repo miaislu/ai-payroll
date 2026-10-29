@@ -404,13 +404,17 @@ function seedV2() {
     const insI = db.prepare('INSERT INTO interviews(candidate_id,round_no,interviewer,interview_date,result,score,notes) VALUES(?,?,?,?,?,?,?)')
     INTERVIEWS.forEach(i => insI.run(i.candidate_id, i.round_no, i.interviewer, i.interview_date, i.result, i.score, i.notes))
   }
-  if (empty('recruiting_channels')) {
-    const insCh = db.prepare('INSERT INTO recruiting_channels(name,type,contact,note) VALUES(?,?,?,?)')
-    RECRUITING_CHANNELS.forEach(c => insCh.run(c.name, c.type, c.contact, c.note))
+  if (empty('recruiting_channels') || empty('channel_expenses')) {
+    const insCh = db.prepare('INSERT INTO recruiting_channels(name,type,contact,note) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM recruiting_channels WHERE name=?)')
+    RECRUITING_CHANNELS.forEach(c => insCh.run(c.name, c.type, c.contact, c.note, c.name))
   }
   if (empty('channel_expenses')) {
     const insE = db.prepare('INSERT INTO channel_expenses(channel_id,year_month,amount,note) VALUES(?,?,?,?)')
-    CHANNEL_EXPENSES.forEach(e => insE.run(e.channel_id, e.year_month, e.amount, e.note))
+    CHANNEL_EXPENSES.forEach(e => {
+      const name = RECRUITING_CHANNELS[e.channel_id - 1].name
+      const channel = db.prepare('SELECT id FROM recruiting_channels WHERE name=?').get(name)
+      insE.run(channel.id, e.year_month, e.amount, e.note)
+    })
   }
   if (empty('cost_budgets')) {
     const insB = db.prepare('INSERT INTO cost_budgets(year_month,department_id,category,amount,note) VALUES(?,?,?,?,?)')

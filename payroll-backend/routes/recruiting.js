@@ -23,6 +23,7 @@ import { monthlyInterviewStats, shanghaiToday } from '../lib/interview_stats.js'
 import { EXPECTED_SALARY_RANGES, expectedSalaryLabel, exactExpectedSalary } from '../lib/candidate_salary.js'
 import { normalizeAnnualSalary } from '../lib/candidate_annual_salary.js'
 import { archiveCandidate, restoreCandidate } from '../lib/candidate_deleted_records.js'
+import { candidateChannel } from '../lib/recruiting_channels.js'
 import { CANDIDATE_STAGES, STAGE_LABELS, INTERVIEW_STATUSES, candidateEvent, changeCandidateStage,
   recordInterviewEvent, syncInterviewStage, candidateForEmployee, linkCandidateEmployee } from '../lib/candidate_workflow.js'
 
@@ -82,7 +83,7 @@ function insertCandidate(body, user) {
   if (body.expected_salary != null && body.expected_salary !== '' && !finiteNonnegative(body.expected_salary)) fail('期望薪资不合法')
   if (body.expected_salary_range != null && !Object.hasOwn(EXPECTED_SALARY_RANGES, body.expected_salary_range)) fail('期望月薪选项不合法')
   if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(body.email))) fail('邮箱格式不合法')
-  const channel = body.source_channel_id ? db.prepare('SELECT id,name FROM recruiting_channels WHERE id=?').get(body.source_channel_id) : null
+  const channel = candidateChannel(body, db.prepare('SELECT id,name FROM recruiting_channels').all())
   if (body.source_channel_id && !channel) fail('来源渠道不存在')
   const annualSalary = normalizeAnnualSalary(body.expected_salary_annual)
   const result = db.prepare(`INSERT INTO candidates(name,phone,email,source_channel,source_channel_id,requisition_id,stage,apply_date,expected_salary,expected_salary_range,created_at)
@@ -314,6 +315,14 @@ recruiting.put('/candidates/:id', (req, res) => {
   const personalProfile = b.personal_profile ? normalizeResumeProfile(b.personal_profile) : candidatePersonalProfile(current)
   const offerChanged = b.offer_amount !== undefined && Number(b.offer_amount) !== Number(current.offer_amount)
   const next = { ...current }
+  if (b.notes_category !== undefined) {
+    if (!['', 'high', 'pending', 'custom'].includes(b.notes_category)) return res.status(400).json({ error: '备注选项不合法' })
+    next.notes_category = b.notes_category
+  }
+  if (b.notes !== undefined) {
+    if (typeof b.notes !== 'string' || b.notes.length > 5000) return res.status(400).json({ error: '备注须为文本，最多5000字' })
+    next.notes = b.notes
+  }
   if (b.expected_salary_annual !== undefined) next.expected_salary_annual = normalizeAnnualSalary(b.expected_salary_annual)
   if (b.personal_profile) {
     next.name = personalProfile.basic.name
@@ -329,7 +338,7 @@ recruiting.put('/candidates/:id', (req, res) => {
   for (const field of ['expected_salary', 'offer_amount', 'eval_score']) if (next[field] != null && !finiteNonnegative(next[field])) return res.status(400).json({ error: `${field} 须为非负数字` })
   if (next.expected_salary_range != null && !Object.hasOwn(EXPECTED_SALARY_RANGES, next.expected_salary_range)) return res.status(400).json({ error: '期望月薪选项不合法' })
   if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(next.email))) return res.status(400).json({ error: '邮箱格式不合法' })
-  const sourceChannel = next.source_channel_id == null || next.source_channel_id === '' ? null : db.prepare('SELECT id,name FROM recruiting_channels WHERE id=?').get(next.source_channel_id)
+  const sourceChannel = candidateChannel(next, db.prepare('SELECT id,name FROM recruiting_channels').all())
   if (next.source_channel_id != null && next.source_channel_id !== '' && !sourceChannel) return res.status(400).json({ error: '来源渠道不存在' })
   next.source_channel_id = sourceChannel?.id || null
   next.source_channel = sourceChannel?.name || String(next.source_channel || '其他').trim().slice(0, 80)
@@ -342,9 +351,11 @@ recruiting.put('/candidates/:id', (req, res) => {
       WHERE id=?`)
       .run(next.name, next.phone, next.email, next.source_channel, next.source_channel_id, next.requisition_id, next.apply_date, next.expected_salary, next.expected_salary_range, next.offer_amount, next.offer_date, next.onboard_date, next.eval_score, next.reject_reason, offerChanged ? 1 : 0, req.params.id)
     if (offerChanged) db.prepare("UPDATE approvals SET status='cancelled', comment=COALESCE(comment,'Offer 金额变更，审批自动失效') WHERE ref_type='candidate' AND ref_id=? AND type='offer' AND status='pending'").run(req.params.id)
+    if (b.notes_category !== undefined) db.prepare('UPDATE candidates SET notes_category=? WHERE id=?').run(next.notes_category, current.id)
+    if (b.notes !== undefined) db.prepare('UPDATE candidates SET notes=? WHERE id=?').run(next.notes, current.id)
     if (b.expected_salary_annual !== undefined) db.prepare('UPDATE candidates SET expected_salary_annual=? WHERE id=?').run(next.expected_salary_annual, current.id)
     if (offerChanged && current.stage === 'accepted') changeCandidateStage(current.id, 'offer', req.user, { note: 'Offer 薪资变更，需重新审批与确认录用' })
-    candidateEvent(current.id, req.user, 'profile_updated', { note: offerChanged ? '更新 Offer 薪资' : '更新人选资料' })
+    candidateEvent(current.id, req.user, 'profile_updated', { note: offerChanged ? '更新 Offer 薪资' : (b.notes !== undefined || b.notes_category !== undefined) ? '更新候选人备注' : '更新人选资料' })
     recordRequisitionLink(current, next.requisition_id, req.user)
     audit(req.user, 'update', 'candidate', current.id, current, { ...next, offer_status: offerChanged ? null : current.offer_status })
     personalProfile.basic = { ...personalProfile.basic, name: next.name, mobile: next.phone || '', personal_email: next.email || '' }
@@ -503,20 +514,26 @@ recruiting.get('/channels', (req, res) => {
   const exp = db.prepare(`SELECT e.id,e.channel_id,e.candidate_id,e.year_month,e.amount,e.note,
     c.name AS candidate_name FROM channel_expenses e LEFT JOIN candidates c ON e.candidate_id=c.id
     ORDER BY e.year_month,e.id`).all()
-  const candidates = db.prepare(`SELECT c.id,c.source_channel_id,c.name,c.stage,c.apply_date,c.expected_salary,c.expected_salary_range,c.offer_amount,
+  const candidates = db.prepare(`SELECT c.id,c.source_channel,c.source_channel_id,c.name,c.stage,c.apply_date,c.expected_salary,c.expected_salary_range,c.expected_salary_annual,c.offer_amount,
     r.title AS requisition_title FROM candidates c
     LEFT JOIN job_requisitions r ON c.requisition_id=r.id
-    WHERE c.source_channel_id IS NOT NULL ORDER BY c.id DESC`).all()
+    ORDER BY c.id DESC`).all()
   const perChannel = {}
   const candidatesPerChannel = {}
   for (const e of exp) (perChannel[e.channel_id] = perChannel[e.channel_id] || []).push(e)
-  for (const c of candidates) (candidatesPerChannel[c.source_channel_id] = candidatesPerChannel[c.source_channel_id] || []).push(c)
-  res.json(rows.map(c => ({ ...c, expenses: perChannel[c.id] || [], candidates: candidatesPerChannel[c.id] || [] })))
+  for (const candidate of candidates) {
+    const channel = candidateChannel(candidate, rows)
+    if (channel) (candidatesPerChannel[channel.id] ||= []).push(candidate)
+  }
+  res.json(rows.map(c => ({ ...c, expenses: perChannel[c.id] || [], candidates: candidatesPerChannel[c.id] || [],
+    candidate_count: (candidatesPerChannel[c.id] || []).length,
+    total_cost: (perChannel[c.id] || []).reduce((sum, item) => sum + Number(item.amount || 0), 0) })))
 })
 recruiting.post('/channels', (req, res) => {
   const b = req.body || {}
   const type = b.type || 'other'
   if (!String(b.name || '').trim()) return res.status(400).json({ error: '缺少渠道名称' })
+  if (db.prepare('SELECT 1 FROM recruiting_channels WHERE name=?').get(String(b.name).trim().slice(0,120))) return res.status(409).json({ error: '同名渠道已存在，请使用现有渠道' })
   if (!CHANNEL_TYPES.includes(type)) return res.status(400).json({ error: '渠道类型不合法' })
   let details
   try { details = channelDetails(b, type) } catch (error) { return res.status(400).json({ error: error.message }) }
@@ -534,6 +551,7 @@ recruiting.put('/channels/:id', (req, res) => {
   if (!before) return res.status(404).json({ error: '渠道不存在' })
   const next = { ...before, ...b }
   if (!String(next.name || '').trim()) return res.status(400).json({ error: '缺少渠道名称' })
+  if (db.prepare('SELECT 1 FROM recruiting_channels WHERE name=? AND id<>?').get(String(next.name).trim().slice(0,120),before.id)) return res.status(409).json({ error: '同名渠道已存在' })
   if (!CHANNEL_TYPES.includes(next.type)) return res.status(400).json({ error: '渠道类型不合法' })
   let details
   try { details = channelDetails(next, next.type) } catch (error) { return res.status(400).json({ error: error.message }) }
@@ -549,7 +567,8 @@ recruiting.put('/channels/:id', (req, res) => {
 recruiting.delete('/channels/:id', (req, res) => {
   const before = db.prepare('SELECT * FROM recruiting_channels WHERE id=?').get(req.params.id)
   if (!before) return res.status(404).json({ error: '渠道不存在' })
-  const candidateCount = db.prepare('SELECT COUNT(*) c FROM candidates WHERE source_channel_id=?').get(req.params.id).c
+  const channels = db.prepare('SELECT id,name FROM recruiting_channels').all()
+  const candidateCount = db.prepare('SELECT source_channel_id,source_channel FROM candidates').all().filter(candidate => candidateChannel(candidate,channels)?.id === before.id).length
   if (candidateCount) return res.status(409).json({ error: `该渠道已关联 ${candidateCount} 位候选人，请先调整候选人来源` })
   const expenseCount = db.prepare('SELECT COUNT(*) c FROM channel_expenses WHERE channel_id=?').get(req.params.id).c
   inTransaction(() => {
@@ -565,9 +584,9 @@ recruiting.post('/channel-expenses', (req, res) => {
   if (!b.channel_id || !b.year_month) return res.status(400).json({ error: '缺少渠道或月份' })
   const channel = db.prepare('SELECT * FROM recruiting_channels WHERE id=?').get(b.channel_id)
   if (!channel) return res.status(400).json({ error: '渠道不存在' })
-  const candidate = b.candidate_id == null || b.candidate_id === '' ? null : db.prepare('SELECT id,name,source_channel_id,expected_salary,expected_salary_range,offer_amount FROM candidates WHERE id=?').get(b.candidate_id)
+  const candidate = b.candidate_id == null || b.candidate_id === '' ? null : db.prepare('SELECT id,name,source_channel,source_channel_id,expected_salary,expected_salary_range,offer_amount FROM candidates WHERE id=?').get(b.candidate_id)
   if (b.candidate_id != null && b.candidate_id !== '' && !candidate) return res.status(400).json({ error: '候选人不存在' })
-  if (candidate && Number(candidate.source_channel_id) !== Number(channel.id)) return res.status(400).json({ error: '候选人未关联到该渠道' })
+  if (candidate && candidateChannel(candidate,db.prepare('SELECT id,name FROM recruiting_channels').all())?.id !== channel.id) return res.status(400).json({ error: '候选人未关联到该渠道' })
   if (channel.type === 'headhunter' && !candidate) return res.status(400).json({ error: '猎头费用必须关联具体候选人' })
   const salary = Number(candidate?.offer_amount || exactExpectedSalary(candidate))
   const suggested = salary && channel.fee_basis_months != null && channel.fee_rate != null

@@ -11,16 +11,21 @@ import { ResumeProfileDetails, ResumeProfileEditor } from '../components/ResumeP
 import { mergeResumeProfile } from '../lib/resume-profile.js'
 import RequisitionMatcher from '../components/RequisitionMatcher.jsx'
 import FeishuSync from '../components/FeishuSync.jsx'
+import CandidateNotes, { NOTE_LABELS } from '../components/CandidateNotes.jsx'
 import { deleteCandidate, getDeletedCandidates, restoreDeletedCandidate } from '../api.js'
 import { interviewOutcomeLabel } from '../lib/interview-outcome.js'
 
 const EMPTY = { name: '', phone: '', email: '', source_channel: '内推', source_channel_id: null, requisition_id: null, stage: 'new', expected_salary_range: 'none', expected_salary_annual: '', apply_date: '' }
-const LEGACY_SOURCES = ['内推', '官网', '其他']
+const LEGACY_SOURCES = ['内推', '猎聘', 'BOSS直聘', '其他']
 const fmtMoney = v => v ? '¥' + v.toLocaleString('zh-CN') : '—'
 const nextInterviewRound = candidate => Math.max(0, ...(candidate.interviews || []).map(item => Number(item.round_no))) + 1
 const latestInterview = candidate => [...(candidate.interviews || [])].sort((a, b) =>
   (b.interview_date || '').localeCompare(a.interview_date || '') || b.round_no - a.round_no || b.id - a.id)[0]
-const sourceValue = item => item.source_channel_id ? `channel:${item.source_channel_id}` : `legacy:${item.source_channel || '内推'}`
+const sourceValue = (item, channels) => {
+  const matches = channels.filter(channel => channel.name === item.source_channel)
+  const id = item.source_channel_id || (matches.length === 1 ? matches[0].id : null)
+  return id ? `channel:${id}` : `legacy:${item.source_channel || '内推'}`
+}
 const sourcePatch = (value, channels) => {
   if (value.startsWith('channel:')) {
     const channel = channels.find(item => item.id === Number(value.slice(8)))
@@ -284,13 +289,14 @@ export default function Candidates({ toast, backendUp, goto, candidateId, user }
           {kanban?.map(group => <Btn sm key={group.stage} primary={stageFilter === group.stage} onClick={() => setStageFilter(group.stage)}>{group.label} {group.items.length}</Btn>)}
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table><thead><tr><th>姓名 / 简历</th><th>应聘岗位</th><th>渠道</th><th>期望年薪</th><th>当前状态</th><th>最近面试</th><th>建档日期</th><th>操作</th></tr></thead>
+          <table><thead><tr><th>姓名 / 简历</th><th>应聘岗位</th><th>渠道</th><th>期望年薪</th><th>当前状态</th><th>备注</th><th>最近面试</th><th>建档日期</th><th>操作</th></tr></thead>
             <tbody>{visibleCandidates.map(candidate => {
               const latest = latestInterview(candidate)
               return <tr key={candidate.id}>
                 <td><b>{candidate.name}</b><div className="hint">{candidate.resumes?.length ? `${candidate.resumes.length} 份附件 · ${candidate.resume_name || '待选择解析文件'}` : '暂无简历附件'}</div></td>
                 <td>{candidate.requisition_title || '未关联需求'}</td><td>{candidate.source_channel || '—'}</td><td>{expectedAnnualSalaryLabel(candidate)}</td>
                 <td><Chip kind={['accepted', 'hired'].includes(candidate.stage) ? 'ok' : candidate.stage === 'rejected' ? 'bad' : 'info'}>{candidateStatusLabel(candidate)}</Chip></td>
+                <td style={{ maxWidth: 180 }}><div>{NOTE_LABELS[candidate.notes_category] || '—'}</div>{candidate.notes && <div className="hint" title={candidate.notes} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>{candidate.notes}</div>}</td>
                 <td>{latest ? <><div>第 {latest.round_no} 轮 · {latest.interview_date}</div><div className="hint">{interviewOutcomeLabel(latest)}</div></> : '尚未安排'}</td>
                 <td>{candidate.apply_date || candidate.created_at?.slice(0, 10)}</td>
                 <td><Btn sm onClick={() => goto('candidates', candidate.id)}>查看 / 流转</Btn></td>
@@ -337,12 +343,12 @@ export default function Candidates({ toast, backendUp, goto, candidateId, user }
             <div className="grid g2">
               <Field label={adding === 'upload' ? '姓名（可选，留空自动提取）' : '姓名'}><input value={form.name} onChange={set('name')} placeholder={adding === 'upload' ? '自动提取后可修改' : '必填'} /></Field>
               <Field label="来源渠道">
-                <select value={sourceValue(form)} onChange={e => setForm({ ...form, ...sourcePatch(e.target.value, channels) })}>
+                <select value={sourceValue(form, channels)} onChange={e => setForm({ ...form, ...sourcePatch(e.target.value, channels) })}>
                   <optgroup label="已建招聘渠道">
                     {channels.map(channel => <option key={channel.id} value={`channel:${channel.id}`}>{channel.type === 'headhunter' ? '猎头 · ' : ''}{channel.name}</option>)}
                   </optgroup>
                   <optgroup label="未建渠道的来源">
-                    {LEGACY_SOURCES.map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
+                    {LEGACY_SOURCES.filter(name => !channels.some(channel => channel.name === name)).map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
                   </optgroup>
                 </select>
               </Field>
@@ -375,12 +381,12 @@ export default function Candidates({ toast, backendUp, goto, candidateId, user }
             <div className="grid g2" style={{ fontSize: 13 }}>
               <div><span className="hint">应聘需求</span><br />{detail.requisition_title || '—'}</div>
               <div><span className="hint">来源渠道</span><br />
-                <select value={sourceValue(detail)} onChange={e => changeDetailSource(e.target.value)} style={{ marginTop: 3 }}>
+                <select value={sourceValue(detail, channels)} onChange={e => changeDetailSource(e.target.value)} style={{ marginTop: 3 }}>
                   <optgroup label="已建招聘渠道">
                     {channels.map(channel => <option key={channel.id} value={`channel:${channel.id}`}>{channel.type === 'headhunter' ? '猎头 · ' : ''}{channel.name}</option>)}
                   </optgroup>
                   <optgroup label="未建渠道的来源">
-                    {[...new Set([...LEGACY_SOURCES, detail.source_channel])].map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
+                    {[...new Set([...LEGACY_SOURCES, detail.source_channel])].filter(name => name && !channels.some(channel => channel.name === name)).map(name => <option key={name} value={`legacy:${name}`}>{name}</option>)}
                   </optgroup>
                 </select>
               </div>
@@ -400,6 +406,7 @@ export default function Candidates({ toast, backendUp, goto, candidateId, user }
               {!['hired', 'rejected', 'withdrawn', 'accepted'].includes(detail.stage) && <Btn sm onClick={() => changeStage('rejected')}>淘汰人选</Btn>}
               {!['hired', 'withdrawn', 'rejected'].includes(detail.stage) && <Btn sm onClick={() => changeStage('withdrawn')}>人选放弃</Btn>}
             </div>
+            <CandidateNotes key={detail.id} candidate={detail} onSaved={load} toast={toast} />
             <ResumeProfileDetails value={detail.personal_profile} />
             <details style={{ marginTop: 14 }} open>
               <summary style={{ cursor: 'pointer', fontWeight: 600 }}>流转记录（{detail.timeline?.length || 0} 条）</summary>

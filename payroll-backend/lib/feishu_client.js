@@ -5,6 +5,8 @@ export const FEISHU_FIELDS = [
   ['phone', '联系电话', 1], ['email', '邮箱', 1], ['job', '应聘岗位', 1],
   ['salary', '期望月薪', 1], ['status', '招聘状态', 1, true],
   ['salary_annual', '期望年薪', 1],
+  ['notes_category', '备注选项', 1], ['notes', '备注', 1],
+  ['interview_dates', '面试时间', 1], ['interview_records', '面试记录', 1],
   ['channel', '来源渠道', 1], ['apply_date', '建档日期', 1],
   ['skills', '技能', 1], ['education', '教育经历', 1], ['work', '工作经历', 1],
   ['synced_at', '本地同步时间', 1, true], ['attachments', '简历附件', 17]
@@ -133,9 +135,9 @@ export class FeishuClient {
     return fields
   }
   async addField(field) { return this.request(`${this.tablePath}/fields`, { method: 'POST', body: { field_name: field.label, type: field.type } }) }
-  async find(sourceKey) {
+  async find(sourceKey, fieldName = '本地人选标识') {
     const data = await this.request(`${this.tablePath}/records/search?page_size=2`, { method: 'POST', body: {
-      filter: { conjunction: 'and', conditions: [{ field_name: '本地人选标识', operator: 'is', value: [sourceKey] }] }
+      filter: { conjunction: 'and', conditions: [{ field_name: fieldName, operator: 'is', value: [sourceKey] }] }
     } })
     if (!Array.isArray(data.items)) throw failFeishu('飞书记录查询响应不完整', 502)
     if (data.items.length > 1 || data.has_more) throw failFeishu('飞书内有重复的本地人选标识，请先合并重复记录', 409)

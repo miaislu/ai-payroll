@@ -113,6 +113,7 @@ export default function FeishuSync({ candidates, user, onClose }) {
       </>}
       {config && tab === 'sync' && <>
         <Hint>{config.configured ? <>目标：<a href={config.base_url} target="_blank" rel="noreferrer">打开飞书数据表</a></> : '尚未连接飞书。可以先选择人选并本地预览，建表后再发送。'}</Hint>
+        {config.interviews_table_id && <Hint>选择面试时间或面试记录时，会同时更新<a href={config.base_url.replace(/([?&]table=)[^&]+/, '$1' + config.interviews_table_id)} target="_blank" rel="noreferrer">面试安排表</a>：每轮独立一行，可按日期筛选本周面试。</Hint>}
         <p>选择人选（每批最多 20 位）和要上传的附件。个人经历仅使用已保存的资料；解析后未确认的信息不会直接发送。</p>
         <div className="row"><Btn sm disabled={busy} onClick={() => { setSelected(candidates.slice(0, 20).map(c => c.id)); setPreview(null); setResults(null) }}>选择当前列表前 20 位</Btn><Btn sm disabled={busy} onClick={() => { setSelected([]); setPreview(null); setResults(null) }}>清空选择</Btn><span>已选 {selected.length} 位</span></div>
         <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10 }}>

@@ -5,6 +5,7 @@ import { REQUISITION_STATUS } from '../data.js'
 import { JOB_CATALOG, categoryForJob } from '../jobCatalog.js'
 import { addMonths, currentPeriod } from '../lib/period.js'
 import { useDialog } from '../components/DialogProvider.jsx'
+import { changeRequisitionHeadcount, requisitionHeadcountError } from '../lib/requisition-headcount.js'
 
 const EMPTY = {
   title: '', department_id: null, grade: 'P5', job_category: 'tech', job_family: JOB_CATALOG.tech.jobs[0],
@@ -23,26 +24,37 @@ export default function Requisitions({ toast, backendUp }) {
   const [list, setList] = useState(null)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   const load = async () => {
     try { setList(await getRequisitions()) } catch { toast('招聘需求加载失败') }
   }
   useEffect(() => { load() }, [backendUp])
 
-  const open = m => { setForm(m === 'new' ? { ...EMPTY } : { ...m, job_category: m.job_category || categoryForJob(m.job_family) }); setEditing(m) }
-  const set = k => e => setForm({ ...form, [k]: ['headcount', 'headcount_max', 'salary_min', 'salary_max', 'fixed_salary_months', 'annual_bonus_months'].includes(k) ? (e.target.value === '' ? null : +e.target.value) : e.target.value })
+  const open = m => { setSaveError(''); setForm(m === 'new' ? { ...EMPTY } : { ...m, job_category: m.job_category || categoryForJob(m.job_family) }); setEditing(m) }
+  const set = k => e => {
+    const raw = e.target.value
+    setSaveError('')
+    setForm(previous => ['headcount', 'headcount_max'].includes(k) ? changeRequisitionHeadcount(previous, k, raw)
+      : { ...previous, [k]: ['salary_min', 'salary_max', 'fixed_salary_months', 'annual_bonus_months'].includes(k) ? (raw === '' ? null : +raw) : raw })
+  }
   const setCategory = e => {
     const job_category = e.target.value
     setForm({ ...form, job_category, job_family: JOB_CATALOG[job_category].jobs[0] })
   }
 
   const save = async () => {
-    if (!form.title.trim()) return toast('岗位名称必填')
+    if (saving) return
+    const error = !form.title.trim() ? '岗位名称必填' : requisitionHeadcountError(form)
+    if (error) { setSaveError(error); return }
+    setSaveError(''); setSaving(true)
     try {
       if (editing === 'new') { await createRequisition(form); toast('已创建招聘需求') }
       else { await updateRequisition(editing.id, form); toast('已保存') }
       setEditing(null); load()
-    } catch { toast('保存失败') }
+    } catch (error) { setSaveError('保存失败：' + error.message) }
+    finally { setSaving(false) }
   }
   const del = async r => {
     if (!await askConfirm({ title: '删除招聘需求', message: `确认删除“${r.title}”？关联候选人会保留，但不再关联该需求。`, confirmLabel: '删除' })) return
@@ -86,7 +98,7 @@ export default function Requisitions({ toast, backendUp }) {
       </Card>
 
       {editing && (
-        <Modal onClose={() => setEditing(null)}>
+        <Modal onClose={saving ? undefined : () => setEditing(null)}>
           <div className="modal" style={{ width: 760, maxHeight: '88vh', overflowY: 'auto' }}>
             <h3>{editing === 'new' ? '新建招聘需求' : '编辑需求 · ' + editing.title}</h3>
             <div className="grid g2">
@@ -95,8 +107,9 @@ export default function Requisitions({ toast, backendUp }) {
               <Field label="具体岗位"><select value={form.job_family} onChange={set('job_family')}>{JOB_CATALOG[form.job_category]?.jobs.map(job => <option key={job}>{job}</option>)}</select></Field>
               <Field label="团队 / 方向"><input value={form.team_label || ''} onChange={set('team_label')} placeholder="如：研发-工艺与设备" /></Field>
               <Field label="城市"><input value={form.city} onChange={set('city')} /></Field>
-              <Field label="基准编制"><input type="number" value={form.headcount} onChange={set('headcount')} min={0} /></Field>
-              <Field label="弹性上限"><input type="number" value={form.headcount_max ?? form.headcount} onChange={set('headcount_max')} min={form.headcount || 0} /></Field>
+              <Field label="基准编制"><input type="number" value={form.headcount ?? ''} onChange={set('headcount')} min={0} max={1000} step={1} /></Field>
+              <Field label="弹性上限"><input type="number" value={form.headcount_max ?? form.headcount} onChange={set('headcount_max')} min={form.headcount || 0} max={1000} step={1} /></Field>
+              <Hint style={{ gridColumn: '1 / -1' }}>提高基准编制超过当前上限时，上限会自动同步提高；已有较高上限会保留。</Hint>
               <Field label="用工类型"><select value={form.employment_type} onChange={set('employment_type')}><option value="employee">正式员工</option><option value="consultant">顾问</option><option value="intern">实习生</option></select></Field>
               <Field label="建议到岗时间（原始口径）"><input value={form.target_timing || ''} onChange={set('target_timing')} placeholder="如：Q4-2026~Q1-2027" /></Field>
               <Field label="预计到岗月（联动成本预测）"><input type="month" value={form.target_month || ''} onChange={set('target_month')} /></Field>
@@ -121,9 +134,10 @@ export default function Requisitions({ toast, backendUp }) {
               <Field label="任职要求" style={{ gridColumn: '1 / -1' }}><textarea rows={4} value={form.requirements || ''} onChange={set('requirements')} placeholder="专业背景、经验、能力与加分项" /></Field>
               <Field label="招聘背景" style={{ gridColumn: '1 / -1' }}><textarea rows={2} value={form.reason || ''} onChange={set('reason')} placeholder="新增编制 / 替补 / 项目背景" /></Field>
             </div>
+            {saveError && <div role="alert" style={{ color: '#dc2626', marginTop: 12 }}>{saveError}</div>}
             <div className="row">
-              <Btn onClick={() => setEditing(null)}>取消</Btn>
-              <Btn primary onClick={save}>保存</Btn>
+              <Btn disabled={saving} onClick={() => setEditing(null)}>取消</Btn>
+              <Btn primary disabled={saving} onClick={save}>{saving ? '保存中…' : '保存'}</Btn>
             </div>
           </div>
         </Modal>
